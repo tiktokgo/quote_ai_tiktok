@@ -35,7 +35,8 @@ interface ChatMessage {
 }
 
 interface ChatPageProps {
-  aiContext: AIContext & { user_id?: string };
+  aiContext?: AIContext & { user_id?: string };
+  isGuest?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -44,11 +45,22 @@ function formatILS(n: number): string {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ChatPage({ aiContext }: ChatPageProps) {
+export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
   const [input, setInput]         = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [quote, setQuote]         = useState<Partial<Quote>>({});
+
+  // ── Guest state ───────────────────────────────────────────────────────────
+  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string } | null>(null);
+  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "" });
+
+  const effectiveContext: (AIContext & { user_id?: string }) | undefined =
+    aiContext ?? (guestInfo ? {
+      company_name: guestInfo.company_name,
+      industry:     guestInfo.industry,
+      company_info: `אימייל: ${guestInfo.email}`,
+    } : undefined);
 
   const bottomRef    = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // improve quote
@@ -60,11 +72,12 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
   }, [messages]);
 
   useEffect(() => {
-    const greeting = aiContext.user_name
-      ? `שלום ${aiContext.user_name}! אני עוזר הצעות המחיר שלך עבור ${aiContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`
-      : `אני עוזר הצעות המחיר שלך עבור ${aiContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`;
+    if (!effectiveContext) return;
+    const greeting = effectiveContext.user_name
+      ? `שלום ${effectiveContext.user_name}! אני עוזר הצעות המחיר שלך עבור ${effectiveContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`
+      : `אני עוזר הצעות המחיר שלך עבור ${effectiveContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`;
     setMessages([{ role: "assistant", content: greeting }]);
-  }, [aiContext]);
+  }, [aiContext, guestInfo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (userText: string, currentQuote: Partial<Quote>) => {
@@ -86,7 +99,7 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: historyForApi, aiContext, currentQuote }),
+        body: JSON.stringify({ messages: historyForApi, aiContext: effectiveContext, currentQuote }),
       });
 
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -244,19 +257,104 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
   const handleApprove = useCallback(async () => {
     setApproveState("loading");
     try {
-      const res = await fetch("/api/approve-quote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: aiContext.user_id, quote }),
-      });
-      const data = await res.json() as { ok: boolean };
-      setApproveState(data.ok ? "done" : "error");
-      if (data.ok) setTimeout(() => setApproveState("idle"), 3000);
+      let res: Response;
+      if (isGuest && guestInfo) {
+        res = await fetch("/api/onboard-quote", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            company_name: guestInfo.company_name,
+            email:        guestInfo.email,
+            industry:     guestInfo.industry,
+            quote,
+          }),
+        });
+      } else {
+        res = await fetch("/api/approve-quote", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: aiContext?.user_id, quote }),
+        });
+      }
+      const data = await res.json() as { ok: boolean; quote_id?: string };
+      if (data.ok) {
+        const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
+        if (base && data.quote_id) {
+          window.location.href = base + data.quote_id;
+        } else {
+          setApproveState("done");
+          setTimeout(() => setApproveState("idle"), 3000);
+        }
+      } else {
+        setApproveState("error");
+        setTimeout(() => setApproveState("idle"), 3000);
+      }
     } catch {
       setApproveState("error");
       setTimeout(() => setApproveState("idle"), 3000);
     }
-  }, [aiContext.user_id, quote]);
+  }, [aiContext, isGuest, guestInfo, quote]);
+
+  // ── Guest form (no token) ──────────────────────────────────────────────────
+  if (isGuest && !guestInfo) {
+    const canSubmit = guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim();
+    return (
+      <div dir="rtl" style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: "100dvh", fontFamily: "'Segoe UI', Arial, sans-serif",
+        background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
+      }}>
+        <div style={{
+          width: "100%", maxWidth: 420, margin: "0 16px",
+          background: "rgba(255,255,255,0.04)", border: "1px solid rgba(139,92,246,0.25)",
+          borderRadius: 16, padding: "36px 28px",
+        }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <div style={{ fontSize: "28px", marginBottom: 8 }}>✨</div>
+            <div style={{ fontSize: "20px", fontWeight: 800, color: "#c4b5fd" }}>יוצר הצעות מחיר</div>
+            <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.6)", marginTop: 6 }}>מלא את הפרטים ונתחיל</div>
+          </div>
+          {(["company_name", "email", "industry"] as const).map((field) => (
+            <div key={field} style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 6, fontWeight: 600 }}>
+                {field === "company_name" ? "שם חברה" : field === "email" ? "אימייל" : "תחום עיסוק"}
+              </label>
+              <input
+                type={field === "email" ? "email" : "text"}
+                value={guestDraft[field]}
+                onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) setGuestInfo({ ...guestDraft }); }}
+                placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: אינסטלציה"}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
+                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
+                  color: "#e2e8f0", fontSize: "14px", outline: "none", direction: "rtl",
+                  fontFamily: "inherit",
+                }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)")}
+              />
+            </div>
+          ))}
+          <button
+            onClick={() => { if (canSubmit) setGuestInfo({ ...guestDraft }); }}
+            disabled={!canSubmit}
+            style={{
+              marginTop: 8, width: "100%", padding: "13px 0", borderRadius: 50, border: "none",
+              background: canSubmit
+                ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)"
+                : "rgba(139,92,246,0.2)",
+              color: "#fff", fontSize: "15px", fontWeight: 700, cursor: canSubmit ? "pointer" : "default",
+              boxShadow: canSubmit ? "0 4px 24px rgba(139,92,246,0.45)" : "none",
+              transition: "background 0.2s, box-shadow 0.2s",
+            }}
+          >
+            התחל בניית הצעת מחיר ←
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     // Outer: LTR flex so quote panel is physically on the LEFT
@@ -283,10 +381,11 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
         {hasQuote && (
           <QuotePanel
             quote={quote}
-            companyName={aiContext.company_name}
-            companyLogo={aiContext.company_logo}
+            companyName={effectiveContext?.company_name ?? ""}
+            companyLogo={effectiveContext?.company_logo}
             onApprove={handleApprove}
             approveState={approveState}
+            approveLabel={isGuest ? "שלח וצור הצעה ←" : "אשר וצור הצעה"}
             onTitleChange={handleTitleChange}
             onDeleteItem={handleDeleteItem}
             onUpdateItem={handleUpdateItem}
@@ -307,8 +406,8 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
           backdropFilter: "blur(8px)",
           textAlign: "right",
         }}>
-          <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4b5fd" }}>{aiContext.company_name}</div>
-          <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.6)", marginTop: 2 }}>{aiContext.industry}</div>
+          <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4b5fd" }}>{effectiveContext?.company_name}</div>
+          <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.6)", marginTop: 2 }}>{effectiveContext?.industry}</div>
         </div>
 
         {/* Messages */}
@@ -481,6 +580,7 @@ function QuotePanel({
   companyLogo,
   onApprove,
   approveState,
+  approveLabel,
   onTitleChange,
   onDeleteItem,
   onUpdateItem,
@@ -497,6 +597,7 @@ function QuotePanel({
   onUpdateItem: (index: number, name: string, description: string) => void;
   onUpdateTerms: (terms: string) => void;
   onUpdateComments: (comments: string) => void;
+  approveLabel?: string;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -847,7 +948,7 @@ function QuotePanel({
           ) : approveState === "error" ? (
             <>✕ שגיאה, נסה שוב</>
           ) : (
-            <><SparkleIcon /> אשר וצור הצעה</>
+            <><SparkleIcon /> {approveLabel ?? "אשר וצור הצעה"}</>
           )}
         </button>
       </div>

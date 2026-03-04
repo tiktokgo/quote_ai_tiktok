@@ -2,17 +2,17 @@ import { NextRequest } from "next/server";
 import type { PartialQuote } from "@/lib/quoteSchema";
 
 export async function POST(req: NextRequest) {
-  const url = process.env.BUBBLE_WEBHOOK_URL;
+  const url = process.env.BUBBLE_ONBOARD_URL;
   const key = process.env.BUBBLE_API_KEY;
 
   if (!url) {
-    return new Response(JSON.stringify({ ok: false, message: "BUBBLE_WEBHOOK_URL not configured" }), {
+    return new Response(JSON.stringify({ ok: false, message: "BUBBLE_ONBOARD_URL not configured" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  let body: { user_id?: string; quote: PartialQuote };
+  let body: { company_name: string; email: string; industry: string; quote: PartialQuote };
   try {
     body = await req.json();
   } catch {
@@ -22,11 +22,14 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { user_id, quote } = body;
+  const { company_name, email, industry, quote } = body;
 
-  // Build full payload — include every field
-  const payload: Record<string, unknown> = { status: "complete" };
-  if (user_id)                   payload.user_id       = user_id;
+  const payload: Record<string, unknown> = {
+    status:       "new_lead",
+    company_name,
+    email,
+    industry,
+  };
   if (quote.title)                payload.title          = quote.title;
   if (quote.client?.name)         payload.client_name    = quote.client.name;
   if (quote.client?.address)      payload.client_address = quote.client.address;
@@ -58,7 +61,7 @@ export async function POST(req: NextRequest) {
 
     const responseText = await res.text().catch(() => "");
     if (!res.ok) {
-      console.error(`Approve webhook failed: HTTP ${res.status} — ${responseText}`);
+      console.error(`Onboard webhook failed: HTTP ${res.status} — ${responseText}`);
       return new Response(JSON.stringify({ ok: false, message: `HTTP ${res.status}` }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -71,14 +74,14 @@ export async function POST(req: NextRequest) {
       quote_id = json.quote_id ?? json.response?.quote_id;
     } catch { /* ignore */ }
 
-    console.log(`Approve webhook OK: HTTP ${res.status} user_id:${user_id} quote_id:${quote_id}`);
+    console.log(`Onboard webhook OK: HTTP ${res.status} email:${email} quote_id:${quote_id}`);
     return new Response(JSON.stringify({ ok: true, quote_id }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("Approve webhook error:", msg);
+    console.error("Onboard webhook error:", msg);
     return new Response(JSON.stringify({ ok: false, message: msg }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
