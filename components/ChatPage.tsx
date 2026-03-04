@@ -251,7 +251,10 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
   }, []);
 
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
-  const [approveState, setApproveState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [approveState, setApproveState] = useState<"idle" | "loading" | "success" | "reviewing" | "submitted" | "error">("idle");
+  const [quoteId, setQuoteId] = useState<string | undefined>();
+  const [reviewStars, setReviewStars] = useState(0);
+  const [reviewComment, setReviewComment] = useState("");
 
   const handleApprove = useCallback(async () => {
     setApproveState("loading");
@@ -277,13 +280,9 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
       }
       const data = await res.json() as { ok: boolean; quote_id?: string };
       if (data.ok) {
-        const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
-        if (base && data.quote_id) {
-          window.location.href = base + data.quote_id;
-        } else {
-          setApproveState("done");
-          setTimeout(() => setApproveState("idle"), 3000);
-        }
+        if (data.quote_id) setQuoteId(data.quote_id);
+        setApproveState("success");
+        setTimeout(() => setApproveState("reviewing"), 2200);
       } else {
         setApproveState("error");
         setTimeout(() => setApproveState("idle"), 3000);
@@ -293,6 +292,28 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
       setTimeout(() => setApproveState("idle"), 3000);
     }
   }, [aiContext, isGuest, guestInfo, quote]);
+
+  const doRedirect = useCallback((id: string | undefined) => {
+    const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
+    if (base && id) window.location.href = base + id;
+  }, []);
+
+  const handleReviewSubmit = useCallback(async () => {
+    setApproveState("submitted");
+    try {
+      await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quote_id: quoteId, stars: reviewStars, comment: reviewComment, user_id: aiContext?.user_id }),
+      });
+    } catch { /* fire and forget */ }
+    setTimeout(() => doRedirect(quoteId), 1500);
+  }, [quoteId, reviewStars, reviewComment, aiContext, doRedirect]);
+
+  const handleSkipReview = useCallback(() => {
+    setApproveState("submitted");
+    setTimeout(() => doRedirect(quoteId), 1500);
+  }, [quoteId, doRedirect]);
 
   // ── Guest form (no token) ──────────────────────────────────────────────────
   if (isGuest && !guestInfo) {
@@ -557,6 +578,100 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
 
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} />
+
+      {/* ── Post-approve overlay ── */}
+      {(approveState === "success" || approveState === "reviewing" || approveState === "submitted") && (
+        <div dir="rtl" style={{
+          position: "fixed", inset: 0, zIndex: 50,
+          background: "rgba(7,7,26,0.88)",
+          backdropFilter: "blur(10px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(139,92,246,0.35)",
+            borderRadius: 20, padding: "44px 36px",
+            maxWidth: 380, width: "90%", textAlign: "center",
+          }}>
+
+            {/* Phase 1: success spinner */}
+            {approveState === "success" && (
+              <>
+                <div style={{ fontSize: 40, marginBottom: 14 }}>✨</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#c4b5fd", marginBottom: 20 }}>מיד תעבור להצעה</div>
+                <div className="qp-spinner" />
+              </>
+            )}
+
+            {/* Phase 2: review form */}
+            {approveState === "reviewing" && (
+              <>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>🌟</div>
+                <div style={{ fontSize: 19, fontWeight: 700, color: "#c4b5fd", marginBottom: 4 }}>איך הייתה החוויה?</div>
+                <div style={{ fontSize: 13, color: "rgba(196,181,253,0.55)", marginBottom: 22 }}>שניה מזמנך תעזור לנו להשתפר</div>
+
+                {/* Stars */}
+                <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 20 }}>
+                  {[1,2,3,4,5].map((s) => (
+                    <button key={s} onClick={() => setReviewStars(s)} style={{
+                      fontSize: 34, background: "none", border: "none", cursor: "pointer",
+                      opacity: s <= reviewStars ? 1 : 0.25, transition: "opacity 0.15s, transform 0.1s",
+                      transform: s <= reviewStars ? "scale(1.1)" : "scale(1)",
+                      lineHeight: 1, padding: 2,
+                    }}>★</button>
+                  ))}
+                </div>
+
+                {/* Comment */}
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="תגובה קצרה (אופציונלי)..."
+                  rows={3}
+                  style={{
+                    width: "100%", boxSizing: "border-box", marginBottom: 16,
+                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
+                    borderRadius: 10, padding: "10px 12px", color: "#e2e8f0",
+                    fontSize: "13px", resize: "none", outline: "none", direction: "rtl",
+                    fontFamily: "inherit",
+                  }}
+                />
+
+                <button
+                  onClick={handleReviewSubmit}
+                  disabled={reviewStars === 0}
+                  style={{
+                    width: "100%", padding: "13px 0", borderRadius: 50, border: "none",
+                    background: reviewStars > 0
+                      ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)"
+                      : "rgba(139,92,246,0.2)",
+                    color: "#fff", fontSize: "15px", fontWeight: 700,
+                    cursor: reviewStars > 0 ? "pointer" : "default",
+                    boxShadow: reviewStars > 0 ? "0 4px 20px rgba(139,92,246,0.4)" : "none",
+                    marginBottom: 10, transition: "background 0.2s",
+                  }}
+                >שלח ביקורת</button>
+
+                <button onClick={handleSkipReview} style={{
+                  background: "none", border: "none", color: "rgba(196,181,253,0.4)",
+                  fontSize: "12px", cursor: "pointer", padding: "4px 8px",
+                }}>דלג</button>
+              </>
+            )}
+
+            {/* Phase 3: submitted */}
+            {approveState === "submitted" && (
+              <>
+                <div style={{ fontSize: 44, marginBottom: 14 }}>🎉</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#c4b5fd", marginBottom: 6 }}>תודה על הביקורת!</div>
+                <div style={{ fontSize: 13, color: "rgba(196,181,253,0.55)" }}>מעביר אותך להצעה...</div>
+                <div className="qp-spinner" style={{ marginTop: 20 }} />
+              </>
+            )}
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -590,7 +705,7 @@ function QuotePanel({
   companyName: string;
   companyLogo?: string;
   onApprove: () => void;
-  approveState: "idle" | "loading" | "done" | "error";
+  approveState: "idle" | "loading" | "success" | "reviewing" | "submitted" | "error";
   onTitleChange: (title: string) => void;
   onDeleteItem: (index: number) => void;
   onUpdateItem: (index: number, name: string, description: string) => void;
@@ -653,6 +768,8 @@ function QuotePanel({
         .qp-edit-icon { opacity: 0; transition: opacity 0.15s; }
         .qp-section:hover .qp-edit-icon { opacity: 1; }
       }
+      @keyframes qp-spin { to { transform: rotate(360deg); } }
+      .qp-spinner { width: 36px; height: 36px; border: 3px solid rgba(196,181,253,0.2); border-top-color: #a78bfa; border-radius: 50%; animation: qp-spin 0.8s linear infinite; margin: 0 auto; }
     `}</style>
     <div dir="rtl" style={{ flex: 1, overflowY: "auto", background: "#ffffff", color: "#1a1a2e", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "24px 20px", maxWidth: "100%" }}>
@@ -930,7 +1047,7 @@ function QuotePanel({
       }}>
         <button
           onClick={onApprove}
-          disabled={approveState === "loading" || approveState === "done"}
+          disabled={approveState !== "idle" && approveState !== "error"}
           style={{
             display: "flex",
             alignItems: "center",
@@ -938,15 +1055,13 @@ function QuotePanel({
             padding: "15px 36px",
             borderRadius: 50,
             border: "none",
-            background: approveState === "done"
-              ? "linear-gradient(135deg, #10b981, #059669)"
-              : approveState === "error"
+            background: approveState === "error"
               ? "linear-gradient(135deg, #ef4444, #dc2626)"
               : "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
             color: "#fff",
             fontSize: "17px",
             fontWeight: 700,
-            cursor: approveState === "loading" || approveState === "done" ? "default" : "pointer",
+            cursor: approveState === "idle" || approveState === "error" ? "pointer" : "default",
             boxShadow: "0 4px 24px rgba(139,92,246,0.45)",
             transition: "transform 0.15s, box-shadow 0.15s, background 0.3s",
             transform: approveState === "loading" ? "scale(0.97)" : "scale(1)",
@@ -955,8 +1070,6 @@ function QuotePanel({
         >
           {approveState === "loading" ? (
             <span style={{ opacity: 0.85 }}>שולח...</span>
-          ) : approveState === "done" ? (
-            <>✓ נשלח בהצלחה</>
           ) : approveState === "error" ? (
             <>✕ שגיאה, נסה שוב</>
           ) : (
