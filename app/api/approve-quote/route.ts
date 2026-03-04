@@ -58,11 +58,7 @@ export async function POST(req: NextRequest) {
 
     const responseText = await res.text().catch(() => "");
     if (!res.ok) {
-      console.error(`Approve webhook failed: HTTP ${res.status} — ${responseText}`);
-      return new Response(JSON.stringify({ ok: false, message: `HTTP ${res.status}` }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      console.warn(`Approve webhook non-2xx: HTTP ${res.status} — ${responseText}`);
     }
 
     let quote_id: string | undefined;

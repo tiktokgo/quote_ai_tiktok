@@ -404,32 +404,33 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
       overflow: "hidden",
     }}>
 
-      {/* ── Mobile tab bar ────────────────────────────────────────────────── */}
+      {/* ── Mobile nav button ─────────────────────────────────────────────── */}
       {isMobile && hasQuote && (
         <div dir="rtl" style={{
-          display: "flex",
           flexShrink: 0,
-          height: 48,
+          padding: "8px 14px",
           background: "rgba(7,7,26,0.97)",
-          borderBottom: "1px solid rgba(139,92,246,0.3)",
-          zIndex: 40,
+          borderBottom: "1px solid rgba(139,92,246,0.2)",
         }}>
-          {(["chat", "preview"] as const).map((view) => (
-            <button key={view} onClick={() => setMobileView(view)} style={{
-              flex: 1,
-              height: "100%",
-              border: "none",
-              borderBottom: mobileView === view ? "2px solid #a78bfa" : "2px solid transparent",
-              background: mobileView === view ? "rgba(139,92,246,0.15)" : "transparent",
-              color: mobileView === view ? "#c4b5fd" : "rgba(196,181,253,0.45)",
-              fontSize: "14px",
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "background 0.15s, color 0.15s",
+          {mobileView === "chat" ? (
+            <button onClick={() => setMobileView("preview")} style={{
+              width: "100%", padding: "10px 0", borderRadius: 50, border: "none",
+              background: "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
+              color: "#fff", fontSize: "15px", fontWeight: 700, cursor: "pointer",
+              boxShadow: "0 2px 16px rgba(139,92,246,0.4)", letterSpacing: 0.2,
             }}>
-              {view === "chat" ? "💬 שיחה" : "📋 הצעה"}
+              📋 צפה בטיוטה ←
             </button>
-          ))}
+          ) : (
+            <button onClick={() => setMobileView("chat")} style={{
+              width: "100%", padding: "10px 0", borderRadius: 50,
+              border: "1px solid rgba(139,92,246,0.45)",
+              background: "rgba(139,92,246,0.1)",
+              color: "#c4b5fd", fontSize: "15px", fontWeight: 700, cursor: "pointer",
+            }}>
+              ← חזרה לשיחה
+            </button>
+          )}
         </div>
       )}
 
@@ -1028,8 +1029,8 @@ function QuotePanel({
         {quote.total !== undefined && (
           <div style={{ marginBottom: 18, padding: "14px 16px", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "20px", fontWeight: 800, color: "#5b21b6" }}>{formatILS(quote.total)}</span>
               <span style={{ fontSize: "13px", color: "#7c3aed", fontWeight: 600 }}>סה&quot;כ לתשלום</span>
+              <span style={{ fontSize: "20px", fontWeight: 800, color: "#5b21b6" }}>{formatILS(quote.total)}</span>
             </div>
             {quote.has_tax && quote.tax_amount !== undefined && (
               <div style={{ fontSize: "11px", color: "#8b5cf6", marginTop: 6, textAlign: "left" }}>
