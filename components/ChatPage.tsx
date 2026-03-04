@@ -385,7 +385,7 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
             companyLogo={effectiveContext?.company_logo}
             onApprove={handleApprove}
             approveState={approveState}
-            approveLabel={isGuest ? "שלח וצור הצעה ←" : "אשר וצור הצעה"}
+            approveLabel="יצירת הצעה"
             onTitleChange={handleTitleChange}
             onDeleteItem={handleDeleteItem}
             onUpdateItem={handleUpdateItem}
@@ -645,6 +645,15 @@ function QuotePanel({
   };
 
   return (
+    <>
+    <style>{`
+      @media (hover: hover) {
+        .qp-item-action { opacity: 0; transition: opacity 0.15s; }
+        .qp-item:hover .qp-item-action { opacity: 1; }
+        .qp-edit-icon { opacity: 0; transition: opacity 0.15s; }
+        .qp-section:hover .qp-edit-icon { opacity: 1; }
+      }
+    `}</style>
     <div dir="rtl" style={{ flex: 1, overflowY: "auto", background: "#ffffff", color: "#1a1a2e", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "24px 20px", maxWidth: "100%" }}>
 
@@ -708,18 +717,18 @@ function QuotePanel({
               <div
                 onClick={startEditTitle}
                 title="לחץ לעריכה"
+                className="qp-section"
                 style={{
                   display: "flex",
                   alignItems: "flex-start",
                   gap: 6,
                   cursor: "text",
-                  group: "title",
                 } as React.CSSProperties}
               >
                 <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151", lineHeight: 1.5, flex: 1 }}>
                   {quote.title}
                 </span>
-                <span style={{ fontSize: "13px", color: "#a78bfa", flexShrink: 0, marginTop: 2 }} title="ערוך כותרת">✏️</span>
+                <span className="qp-edit-icon" style={{ fontSize: "13px", color: "#a78bfa", flexShrink: 0, marginTop: 2 }} title="ערוך כותרת">✏️</span>
               </div>
             )}
           </div>
@@ -746,7 +755,7 @@ function QuotePanel({
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
               {quote.items.map((item, i) => (
-                <div key={i} style={{
+                <div key={i} className="qp-item" style={{
                   display: "flex",
                   gap: 8,
                   padding: "10px 0",
@@ -801,7 +810,7 @@ function QuotePanel({
                     >
                       <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
                         <span style={{ fontSize: "13px", fontWeight: 600, color: "#111827", flex: 1 }}>{item.name}</span>
-                        <span style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
+                        <span className="qp-item-action" style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
                       </div>
                       {item.description && (
                         <div style={{ fontSize: "11px", color: "#6b7280", marginTop: 3, lineHeight: 1.5 }}>{item.description}</div>
@@ -810,6 +819,7 @@ function QuotePanel({
                   )}
                   {/* Delete button */}
                   <button
+                    className="qp-item-action"
                     onClick={() => onDeleteItem(i)}
                     title="הסר פריט"
                     style={{
@@ -859,7 +869,7 @@ function QuotePanel({
         {/* Terms — editable */}
         {quote.terms && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>תנאי תשלום</div>
+            <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>תנאים ותקנון</div>
             {editingTerms ? (
               <textarea
                 autoFocus
@@ -871,9 +881,9 @@ function QuotePanel({
                 style={editTextareaStyle}
               />
             ) : (
-              <div onClick={startEditTerms} title="לחץ לעריכה" style={{ cursor: "text", display: "flex", alignItems: "flex-start", gap: 4 }}>
+              <div onClick={startEditTerms} title="לחץ לעריכה" className="qp-section" style={{ cursor: "text", display: "flex", alignItems: "flex-start", gap: 4 }}>
                 <span style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6, flex: 1 }}>{quote.terms}</span>
-                <span style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
+                <span className="qp-edit-icon" style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
               </div>
             )}
           </div>
@@ -894,9 +904,9 @@ function QuotePanel({
                 style={editTextareaStyle}
               />
             ) : (
-              <div onClick={startEditComments} title="לחץ לעריכה" style={{ cursor: "text", display: "flex", alignItems: "flex-start", gap: 4 }}>
+              <div onClick={startEditComments} title="לחץ לעריכה" className="qp-section" style={{ cursor: "text", display: "flex", alignItems: "flex-start", gap: 4 }}>
                 <span style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6, flex: 1, whiteSpace: "pre-wrap" }}>{combinedNotes}</span>
-                <span style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
+                <span className="qp-edit-icon" style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
               </div>
             )}
           </div>
@@ -914,7 +924,9 @@ function QuotePanel({
         background: "linear-gradient(to top, #ffffff 70%, transparent)",
         padding: "16px 20px 20px",
         display: "flex",
-        justifyContent: "center",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
       }}>
         <button
           onClick={onApprove}
@@ -923,7 +935,7 @@ function QuotePanel({
             display: "flex",
             alignItems: "center",
             gap: 8,
-            padding: "13px 28px",
+            padding: "15px 36px",
             borderRadius: 50,
             border: "none",
             background: approveState === "done"
@@ -932,7 +944,7 @@ function QuotePanel({
               ? "linear-gradient(135deg, #ef4444, #dc2626)"
               : "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
             color: "#fff",
-            fontSize: "15px",
+            fontSize: "17px",
             fontWeight: 700,
             cursor: approveState === "loading" || approveState === "done" ? "default" : "pointer",
             boxShadow: "0 4px 24px rgba(139,92,246,0.45)",
@@ -948,11 +960,17 @@ function QuotePanel({
           ) : approveState === "error" ? (
             <>✕ שגיאה, נסה שוב</>
           ) : (
-            <><SparkleIcon /> {approveLabel ?? "אשר וצור הצעה"}</>
+            <><SparkleIcon /> {approveLabel ?? "יצירת הצעה"}</>
           )}
         </button>
+        {approveState === "idle" && (
+          <div style={{ fontSize: "11px", color: "rgba(0,0,0,0.4)", textAlign: "center" }}>
+            נעביר אותך לעמוד תצוגה ושיתוף ההצעה
+          </div>
+        )}
       </div>
     </div>
+    </>
   );
 }
 

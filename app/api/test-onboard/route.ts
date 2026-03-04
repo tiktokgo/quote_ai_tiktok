@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
 
 /**
- * GET /api/test-bubble?api_key=TOKEN_API_KEY[&user_id=EXISTING_USER_ID]
+ * GET /api/test-onboard?api_key=TOKEN_API_KEY
  *
- * Fires a complete sample payload to BUBBLE_WEBHOOK_URL with every
+ * Fires a complete sample payload to BUBBLE_ONBOARD_URL with every
  * possible field populated. Use this once to initialize all field types
- * in Bubble, then you can remove the initialize flag.
+ * in Bubble for the new-user (guest) onboarding flow.
  */
 export async function GET(req: NextRequest) {
   const apiKey = process.env.TOKEN_API_KEY;
@@ -18,20 +18,20 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const url = process.env.BUBBLE_WEBHOOK_URL;
+  const url = process.env.BUBBLE_ONBOARD_URL;
   const key = process.env.BUBBLE_API_KEY;
   if (!url) {
-    return new Response(JSON.stringify({ error: "BUBBLE_WEBHOOK_URL not set" }), {
+    return new Response(JSON.stringify({ error: "BUBBLE_ONBOARD_URL not set" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  const userId = searchParams.get("user_id") ?? undefined;
-
-  const fullPayload: Record<string, unknown> = {
-    status:         "complete",
-    ...(userId ? { user_id: userId } : {}),
+  const fullPayload = {
+    status:         "new_lead",
+    company_name:   "חברת דוגמה בע\"מ",
+    email:          "demo@example.com",
+    industry:       "אינסטלציה",
     title:          "הצעת מחיר — אינסטלציה — רחוב הרצל 5",
     client_name:    "ישראל ישראלי",
     client_address: "רחוב הרצל 5, תל אביב",
