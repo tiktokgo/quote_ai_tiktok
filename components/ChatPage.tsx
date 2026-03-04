@@ -243,12 +243,11 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
   }, []);
 
   const handleUpdateTerms = useCallback((terms: string) => {
-    setQuote((prev) => ({ ...prev, terms }));
+    setQuote((prev) => ({ ...prev, terms, warranty: "" }));
   }, []);
 
   const handleUpdateComments = useCallback((comments: string) => {
-    // fold warranty into comments on first manual edit
-    setQuote((prev) => ({ ...prev, comments, warranty: "" }));
+    setQuote((prev) => ({ ...prev, comments }));
   }, []);
 
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
@@ -627,10 +626,11 @@ function QuotePanel({
     if (itemNameDraft.trim()) onUpdateItem(idx, itemNameDraft.trim(), itemDescDraft);
   };
 
-  const startEditTerms = () => { setTermsDraft(quote.terms ?? ""); setEditingTerms(true); };
+  const combinedTerms = [quote.warranty, quote.terms].filter(Boolean).join("\n\n");
+  const startEditTerms = () => { setTermsDraft(combinedTerms); setEditingTerms(true); };
   const commitTerms = () => { setEditingTerms(false); onUpdateTerms(termsDraft); };
 
-  const combinedNotes = [quote.warranty, quote.comments].filter(Boolean).join("\n\n");
+  const combinedNotes = quote.comments ?? "";
   const startEditComments = () => { setCommentsDraft(combinedNotes); setEditingComments(true); };
   const commitComments = () => { setEditingComments(false); onUpdateComments(commentsDraft); };
 
@@ -867,7 +867,7 @@ function QuotePanel({
         )}
 
         {/* Terms — editable */}
-        {quote.terms && (
+        {combinedTerms && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>תנאים ותקנון</div>
             {editingTerms ? (
@@ -882,7 +882,7 @@ function QuotePanel({
               />
             ) : (
               <div onClick={startEditTerms} title="לחץ לעריכה" className="qp-section" style={{ cursor: "text", display: "flex", alignItems: "flex-start", gap: 4 }}>
-                <span style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6, flex: 1 }}>{quote.terms}</span>
+                <span style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6, flex: 1, whiteSpace: "pre-wrap" }}>{combinedTerms}</span>
                 <span className="qp-edit-icon" style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
               </div>
             )}
