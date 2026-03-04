@@ -62,6 +62,22 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
       company_info: `אימייל: ${guestInfo.email}`,
     } : undefined);
 
+  // ── Mobile state ──────────────────────────────────────────────────────────
+  const [isMobile, setIsMobile] = useState(false);
+  const isMobileRef = useRef(false);
+  const [mobileView, setMobileView] = useState<"chat" | "preview">("chat");
+
+  useEffect(() => {
+    const check = () => {
+      const mobile = window.innerWidth < 768;
+      isMobileRef.current = mobile;
+      setIsMobile(mobile);
+    };
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
   const bottomRef    = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // improve quote
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -130,6 +146,7 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
               });
             } else if (event.type === "quote_update" && event.quote) {
               setQuote((prev) => mergeQuote(prev, event.quote!));
+              if (isMobileRef.current) setMobileView("preview");
             } else if (event.type === "done") {
               setMessages((prev) => {
                 const updated = [...prev];
@@ -377,24 +394,56 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
   }
 
   return (
-    // Outer: LTR flex so quote panel is physically on the LEFT
+    // Outer: column flex — tab bar on top (mobile), panels row below
     <div style={{
       display: "flex",
+      flexDirection: "column",
       height: "100dvh",
       fontFamily: "'Segoe UI', Arial, sans-serif",
       background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
       overflow: "hidden",
-      direction: "ltr",
     }}>
+
+      {/* ── Mobile tab bar ────────────────────────────────────────────────── */}
+      {isMobile && hasQuote && (
+        <div dir="rtl" style={{
+          display: "flex",
+          flexShrink: 0,
+          height: 48,
+          background: "rgba(7,7,26,0.97)",
+          borderBottom: "1px solid rgba(139,92,246,0.3)",
+          zIndex: 40,
+        }}>
+          {(["chat", "preview"] as const).map((view) => (
+            <button key={view} onClick={() => setMobileView(view)} style={{
+              flex: 1,
+              height: "100%",
+              border: "none",
+              borderBottom: mobileView === view ? "2px solid #a78bfa" : "2px solid transparent",
+              background: mobileView === view ? "rgba(139,92,246,0.15)" : "transparent",
+              color: mobileView === view ? "#c4b5fd" : "rgba(196,181,253,0.45)",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "background 0.15s, color 0.15s",
+            }}>
+              {view === "chat" ? "💬 שיחה" : "📋 הצעה"}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Panels row ────────────────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "row", minHeight: 0, direction: "ltr" }}>
 
       {/* ── LEFT: Quote panel (white document) ──────────────────────────── */}
       <div style={{
-        width: hasQuote ? "44%" : "0",
-        minWidth: hasQuote ? "300px" : "0",
+        width: hasQuote ? (isMobile ? (mobileView === "preview" ? "100%" : "0") : "44%") : "0",
+        minWidth: hasQuote && !isMobile ? "300px" : "0",
         transition: "width 0.4s ease, min-width 0.4s ease",
         overflow: "hidden",
         background: "#ffffff",
-        borderRight: hasQuote ? "1px solid #e5e7eb" : "none",
+        borderRight: hasQuote && !isMobile ? "1px solid #e5e7eb" : "none",
         display: "flex",
         flexDirection: "column",
       }}>
@@ -416,7 +465,13 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
       </div>
 
       {/* ── RIGHT: Chat panel (dark) ─────────────────────────────────────── */}
-      <div dir="rtl" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, color: "#e2e8f0" }}>
+      <div dir="rtl" style={{
+        flex: 1,
+        display: isMobile && hasQuote && mobileView === "preview" ? "none" : "flex",
+        flexDirection: "column",
+        minWidth: 0,
+        color: "#e2e8f0",
+      }}>
 
         {/* Header */}
         <div style={{
@@ -575,6 +630,7 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
           </div>
         </div>
       </div>
+      </div>{/* end panels row */}
 
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} />
@@ -1035,53 +1091,63 @@ function QuotePanel({
       </div>
 
       {/* ── Floating approve button ── */}
-      <div style={{
-        position: "sticky",
-        bottom: 0,
-        background: "linear-gradient(to top, #ffffff 70%, transparent)",
-        padding: "16px 20px 20px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 6,
-      }}>
-        <button
-          onClick={onApprove}
-          disabled={approveState !== "idle" && approveState !== "error"}
-          style={{
+      {(() => {
+        const canApprove = (quote.items?.length ?? 0) > 0 && (quote.total ?? 0) > 0;
+        const isDisabled = (approveState !== "idle" && approveState !== "error") || !canApprove;
+        const helperText = !canApprove
+          ? ((quote.items?.length ?? 0) === 0 ? "ממתין לפריטי עבודה..." : "עדכן מחיר כדי להמשיך")
+          : "נעביר אותך לעמוד תצוגה ושיתוף ההצעה";
+        return (
+          <div style={{
+            position: "sticky",
+            bottom: 0,
+            background: "linear-gradient(to top, #ffffff 70%, transparent)",
+            padding: "16px 20px 20px",
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
-            gap: 8,
-            padding: "15px 36px",
-            borderRadius: 50,
-            border: "none",
-            background: approveState === "error"
-              ? "linear-gradient(135deg, #ef4444, #dc2626)"
-              : "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
-            color: "#fff",
-            fontSize: "17px",
-            fontWeight: 700,
-            cursor: approveState === "idle" || approveState === "error" ? "pointer" : "default",
-            boxShadow: "0 4px 24px rgba(139,92,246,0.45)",
-            transition: "transform 0.15s, box-shadow 0.15s, background 0.3s",
-            transform: approveState === "loading" ? "scale(0.97)" : "scale(1)",
-            letterSpacing: 0.3,
-          }}
-        >
-          {approveState === "loading" ? (
-            <span style={{ opacity: 0.85 }}>שולח...</span>
-          ) : approveState === "error" ? (
-            <>✕ שגיאה, נסה שוב</>
-          ) : (
-            <><SparkleIcon /> {approveLabel ?? "יצירת הצעה"}</>
-          )}
-        </button>
-        {approveState === "idle" && (
-          <div style={{ fontSize: "11px", color: "rgba(0,0,0,0.4)", textAlign: "center" }}>
-            נעביר אותך לעמוד תצוגה ושיתוף ההצעה
+            gap: 6,
+          }}>
+            <button
+              onClick={canApprove ? onApprove : undefined}
+              disabled={isDisabled}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "15px 36px",
+                borderRadius: 50,
+                border: "none",
+                background: approveState === "error"
+                  ? "linear-gradient(135deg, #ef4444, #dc2626)"
+                  : "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
+                color: "#fff",
+                fontSize: "17px",
+                fontWeight: 700,
+                cursor: !isDisabled ? "pointer" : "default",
+                boxShadow: canApprove ? "0 4px 24px rgba(139,92,246,0.45)" : "none",
+                opacity: !canApprove && approveState === "idle" ? 0.4 : 1,
+                transition: "transform 0.15s, box-shadow 0.15s, background 0.3s, opacity 0.2s",
+                transform: approveState === "loading" ? "scale(0.97)" : "scale(1)",
+                letterSpacing: 0.3,
+              }}
+            >
+              {approveState === "loading" ? (
+                <span style={{ opacity: 0.85 }}>שולח...</span>
+              ) : approveState === "error" ? (
+                <>✕ שגיאה, נסה שוב</>
+              ) : (
+                <><SparkleIcon /> {approveLabel ?? "יצירת הצעה"}</>
+              )}
+            </button>
+            {approveState === "idle" && (
+              <div style={{ fontSize: "11px", color: "rgba(0,0,0,0.4)", textAlign: "center" }}>
+                {helperText}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
     </div>
     </>
   );

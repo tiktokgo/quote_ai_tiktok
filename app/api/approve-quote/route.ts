@@ -6,8 +6,8 @@ export async function POST(req: NextRequest) {
   const key = process.env.BUBBLE_API_KEY;
 
   if (!url) {
-    return new Response(JSON.stringify({ ok: false, message: "BUBBLE_WEBHOOK_URL not configured" }), {
-      status: 500,
+    console.warn("BUBBLE_WEBHOOK_URL not configured — skipping webhook");
+    return new Response(JSON.stringify({ ok: true }), {
       headers: { "Content-Type": "application/json" },
     });
   }
