@@ -212,6 +212,15 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
 
   const hasQuote = (quote.items?.length ?? 0) > 0 || !!quote.title;
 
+  // ── Manual quote edits (title + item delete) ──────────────────────────────
+  const handleTitleChange = useCallback((title: string) => {
+    setQuote((prev) => ({ ...prev, title }));
+  }, []);
+
+  const handleDeleteItem = useCallback((index: number) => {
+    setQuote((prev) => ({ ...prev, items: prev.items?.filter((_, i) => i !== index) }));
+  }, []);
+
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
   const [approveState, setApproveState] = useState<"idle" | "loading" | "done" | "error">("idle");
 
@@ -260,6 +269,8 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
             companyName={aiContext.company_name}
             onApprove={handleApprove}
             approveState={approveState}
+            onTitleChange={handleTitleChange}
+            onDeleteItem={handleDeleteItem}
           />
         )}
       </div>
@@ -344,29 +355,27 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
             borderRadius: 16,
             padding: "8px 10px",
           }}>
-            {/* Send button — LEFT side (RTL: points ← toward messages) */}
+            {/* Mic — LEFT in JSX = RIGHT in RTL */}
             <button
-              onClick={handleSend}
-              disabled={isLoading || !input.trim()}
+              onClick={handleVoice}
+              disabled={isLoading}
+              title={isListening ? "עצור הקלטה" : "הקלד בקול"}
               style={{
                 flexShrink: 0,
                 width: 34,
                 height: 34,
                 borderRadius: "50%",
-                border: "none",
-                background: input.trim() && !isLoading
-                  ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
-                  : "rgba(139,92,246,0.2)",
-                color: "#fff",
-                cursor: input.trim() && !isLoading ? "pointer" : "default",
+                border: isListening ? "1px solid rgba(239,68,68,0.6)" : "1px solid rgba(139,92,246,0.3)",
+                background: isListening ? "rgba(239,68,68,0.15)" : "rgba(139,92,246,0.1)",
+                color: isListening ? "#f87171" : "#a78bfa",
+                cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "18px",
-                transition: "background 0.2s",
+                fontSize: "16px",
               }}
             >
-              ←
+              🎙
             </button>
 
             {/* Textarea */}
@@ -399,27 +408,29 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
               }}
             />
 
-            {/* Mic — RIGHT side of input */}
+            {/* Send — RIGHT in JSX = LEFT in RTL */}
             <button
-              onClick={handleVoice}
-              disabled={isLoading}
-              title={isListening ? "עצור הקלטה" : "הקלד בקול"}
+              onClick={handleSend}
+              disabled={isLoading || !input.trim()}
               style={{
                 flexShrink: 0,
                 width: 34,
                 height: 34,
                 borderRadius: "50%",
-                border: isListening ? "1px solid rgba(239,68,68,0.6)" : "1px solid rgba(139,92,246,0.3)",
-                background: isListening ? "rgba(239,68,68,0.15)" : "rgba(139,92,246,0.1)",
-                color: isListening ? "#f87171" : "#a78bfa",
-                cursor: "pointer",
+                border: "none",
+                background: input.trim() && !isLoading
+                  ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
+                  : "rgba(139,92,246,0.2)",
+                color: "#fff",
+                cursor: input.trim() && !isLoading ? "pointer" : "default",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "16px",
+                fontSize: "18px",
+                transition: "background 0.2s",
               }}
             >
-              🎙
+              ←
             </button>
           </div>
         </div>
@@ -448,12 +459,28 @@ function QuotePanel({
   companyName,
   onApprove,
   approveState,
+  onTitleChange,
+  onDeleteItem,
 }: {
   quote: Partial<Quote>;
   companyName: string;
   onApprove: () => void;
   approveState: "idle" | "loading" | "done" | "error";
+  onTitleChange: (title: string) => void;
+  onDeleteItem: (index: number) => void;
 }) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+
+  const startEditTitle = () => {
+    setTitleDraft(quote.title ?? "");
+    setEditingTitle(true);
+  };
+  const commitTitle = () => {
+    setEditingTitle(false);
+    if (titleDraft.trim()) onTitleChange(titleDraft.trim());
+  };
+
   return (
     <div dir="rtl" style={{ flex: 1, overflowY: "auto", background: "#ffffff", color: "#1a1a2e", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "24px 20px", maxWidth: "100%" }}>
@@ -473,10 +500,47 @@ function QuotePanel({
           )}
         </div>
 
-        {/* Title */}
+        {/* Title — inline editable */}
         {quote.title && (
-          <div style={{ marginBottom: 16, fontSize: "13px", fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>
-            {quote.title}
+          <div style={{ marginBottom: 16 }}>
+            {editingTitle ? (
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => { if (e.key === "Enter") commitTitle(); if (e.key === "Escape") setEditingTitle(false); }}
+                style={{
+                  width: "100%",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "#374151",
+                  border: "1px solid #a78bfa",
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                  outline: "none",
+                  fontFamily: "inherit",
+                  direction: "rtl",
+                }}
+              />
+            ) : (
+              <div
+                onClick={startEditTitle}
+                title="לחץ לעריכה"
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 6,
+                  cursor: "text",
+                  group: "title",
+                } as React.CSSProperties}
+              >
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151", lineHeight: 1.5, flex: 1 }}>
+                  {quote.title}
+                </span>
+                <span style={{ fontSize: "13px", color: "#a78bfa", flexShrink: 0, marginTop: 2 }} title="ערוך כותרת">✏️</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -503,11 +567,12 @@ function QuotePanel({
               {quote.items.map((item, i) => (
                 <div key={i} style={{
                   display: "flex",
-                  gap: 10,
+                  gap: 8,
                   padding: "10px 0",
                   borderBottom: "1px solid #f3f4f6",
                   alignItems: "flex-start",
                 }}>
+                  {/* Number badge */}
                   <span style={{
                     flexShrink: 0,
                     width: 22,
@@ -520,15 +585,44 @@ function QuotePanel({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    marginTop: 1,
                   }}>
                     {i + 1}
                   </span>
-                  <div style={{ flex: 1 }}>
+                  {/* Content */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: "13px", fontWeight: 600, color: "#111827" }}>{item.name}</div>
                     {item.description && (
                       <div style={{ fontSize: "11px", color: "#6b7280", marginTop: 3, lineHeight: 1.5 }}>{item.description}</div>
                     )}
                   </div>
+                  {/* Delete button */}
+                  <button
+                    onClick={() => onDeleteItem(i)}
+                    title="הסר פריט"
+                    style={{
+                      flexShrink: 0,
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      border: "1px solid #fca5a5",
+                      background: "transparent",
+                      color: "#f87171",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      lineHeight: 1,
+                      padding: 0,
+                      marginTop: 1,
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "#fee2e2")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
             </div>
