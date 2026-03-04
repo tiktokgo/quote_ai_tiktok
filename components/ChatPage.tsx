@@ -212,13 +212,30 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
 
   const hasQuote = (quote.items?.length ?? 0) > 0 || !!quote.title;
 
-  // ── Manual quote edits (title + item delete) ──────────────────────────────
+  // ── Manual quote edits ────────────────────────────────────────────────────
   const handleTitleChange = useCallback((title: string) => {
     setQuote((prev) => ({ ...prev, title }));
   }, []);
 
   const handleDeleteItem = useCallback((index: number) => {
     setQuote((prev) => ({ ...prev, items: prev.items?.filter((_, i) => i !== index) }));
+  }, []);
+
+  const handleUpdateItem = useCallback((index: number, name: string, description: string) => {
+    setQuote((prev) => {
+      const items = [...(prev.items ?? [])];
+      items[index] = { ...items[index], name, description };
+      return { ...prev, items };
+    });
+  }, []);
+
+  const handleUpdateTerms = useCallback((terms: string) => {
+    setQuote((prev) => ({ ...prev, terms }));
+  }, []);
+
+  const handleUpdateComments = useCallback((comments: string) => {
+    // fold warranty into comments on first manual edit
+    setQuote((prev) => ({ ...prev, comments, warranty: "" }));
   }, []);
 
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
@@ -272,6 +289,9 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
             approveState={approveState}
             onTitleChange={handleTitleChange}
             onDeleteItem={handleDeleteItem}
+            onUpdateItem={handleUpdateItem}
+            onUpdateTerms={handleUpdateTerms}
+            onUpdateComments={handleUpdateComments}
           />
         )}
       </div>
@@ -463,6 +483,9 @@ function QuotePanel({
   approveState,
   onTitleChange,
   onDeleteItem,
+  onUpdateItem,
+  onUpdateTerms,
+  onUpdateComments,
 }: {
   quote: Partial<Quote>;
   companyName: string;
@@ -471,17 +494,53 @@ function QuotePanel({
   approveState: "idle" | "loading" | "done" | "error";
   onTitleChange: (title: string) => void;
   onDeleteItem: (index: number) => void;
+  onUpdateItem: (index: number, name: string, description: string) => void;
+  onUpdateTerms: (terms: string) => void;
+  onUpdateComments: (comments: string) => void;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
 
-  const startEditTitle = () => {
-    setTitleDraft(quote.title ?? "");
-    setEditingTitle(true);
+  const [editingItemIdx, setEditingItemIdx] = useState<number | null>(null);
+  const [itemNameDraft, setItemNameDraft] = useState("");
+  const [itemDescDraft, setItemDescDraft] = useState("");
+
+  const [editingTerms, setEditingTerms] = useState(false);
+  const [termsDraft, setTermsDraft] = useState("");
+
+  const [editingComments, setEditingComments] = useState(false);
+  const [commentsDraft, setCommentsDraft] = useState("");
+
+  const startEditTitle = () => { setTitleDraft(quote.title ?? ""); setEditingTitle(true); };
+  const commitTitle = () => { setEditingTitle(false); if (titleDraft.trim()) onTitleChange(titleDraft.trim()); };
+
+  const startEditItem = (i: number) => {
+    setEditingItemIdx(i);
+    setItemNameDraft(quote.items?.[i]?.name ?? "");
+    setItemDescDraft(quote.items?.[i]?.description ?? "");
   };
-  const commitTitle = () => {
-    setEditingTitle(false);
-    if (titleDraft.trim()) onTitleChange(titleDraft.trim());
+  const commitItem = () => {
+    if (editingItemIdx === null) return;
+    const idx = editingItemIdx;
+    setEditingItemIdx(null);
+    if (itemNameDraft.trim()) onUpdateItem(idx, itemNameDraft.trim(), itemDescDraft);
+  };
+
+  const startEditTerms = () => { setTermsDraft(quote.terms ?? ""); setEditingTerms(true); };
+  const commitTerms = () => { setEditingTerms(false); onUpdateTerms(termsDraft); };
+
+  const combinedNotes = [quote.warranty, quote.comments].filter(Boolean).join("\n\n");
+  const startEditComments = () => { setCommentsDraft(combinedNotes); setEditingComments(true); };
+  const commitComments = () => { setEditingComments(false); onUpdateComments(commentsDraft); };
+
+  const editInputStyle: React.CSSProperties = {
+    width: "100%", fontSize: "13px", color: "#374151",
+    border: "1px solid #a78bfa", borderRadius: 6, padding: "4px 8px",
+    outline: "none", fontFamily: "inherit", direction: "rtl",
+    background: "#faf5ff", boxSizing: "border-box",
+  };
+  const editTextareaStyle: React.CSSProperties = {
+    ...editInputStyle, resize: "vertical" as const, lineHeight: 1.6, minHeight: 60,
   };
 
   return (
@@ -542,18 +601,7 @@ function QuotePanel({
                 onChange={(e) => setTitleDraft(e.target.value)}
                 onBlur={commitTitle}
                 onKeyDown={(e) => { if (e.key === "Enter") commitTitle(); if (e.key === "Escape") setEditingTitle(false); }}
-                style={{
-                  width: "100%",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  color: "#374151",
-                  border: "1px solid #a78bfa",
-                  borderRadius: 6,
-                  padding: "4px 8px",
-                  outline: "none",
-                  fontFamily: "inherit",
-                  direction: "rtl",
-                }}
+                style={{ ...editInputStyle, fontWeight: 600 }}
               />
             ) : (
               <div
@@ -621,13 +669,44 @@ function QuotePanel({
                   }}>
                     {i + 1}
                   </span>
-                  {/* Content */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "13px", fontWeight: 600, color: "#111827" }}>{item.name}</div>
-                    {item.description && (
-                      <div style={{ fontSize: "11px", color: "#6b7280", marginTop: 3, lineHeight: 1.5 }}>{item.description}</div>
-                    )}
-                  </div>
+                  {/* Content — editable */}
+                  {editingItemIdx === i ? (
+                    <div
+                      style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}
+                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commitItem(); }}
+                    >
+                      <input
+                        autoFocus
+                        value={itemNameDraft}
+                        onChange={(e) => setItemNameDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitItem(); } if (e.key === "Escape") setEditingItemIdx(null); }}
+                        placeholder="שם פריט"
+                        style={{ ...editInputStyle, fontWeight: 600 }}
+                      />
+                      <textarea
+                        value={itemDescDraft}
+                        onChange={(e) => setItemDescDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Escape") setEditingItemIdx(null); }}
+                        placeholder="תיאור"
+                        rows={2}
+                        style={{ ...editInputStyle, resize: "vertical", lineHeight: 1.5 }}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      style={{ flex: 1, minWidth: 0, cursor: "text" }}
+                      onClick={() => startEditItem(i)}
+                      title="לחץ לעריכה"
+                    >
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                        <span style={{ fontSize: "13px", fontWeight: 600, color: "#111827", flex: 1 }}>{item.name}</span>
+                        <span style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
+                      </div>
+                      {item.description && (
+                        <div style={{ fontSize: "11px", color: "#6b7280", marginTop: 3, lineHeight: 1.5 }}>{item.description}</div>
+                      )}
+                    </div>
+                  )}
                   {/* Delete button */}
                   <button
                     onClick={() => onDeleteItem(i)}
@@ -676,27 +755,49 @@ function QuotePanel({
           </div>
         )}
 
-        {/* Warranty */}
-        {quote.warranty && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>אחריות</div>
-            <div style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6 }}>{quote.warranty}</div>
-          </div>
-        )}
-
-        {/* Terms */}
+        {/* Terms — editable */}
         {quote.terms && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>תנאי תשלום</div>
-            <div style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6 }}>{quote.terms}</div>
+            {editingTerms ? (
+              <textarea
+                autoFocus
+                value={termsDraft}
+                onChange={(e) => setTermsDraft(e.target.value)}
+                onBlur={commitTerms}
+                onKeyDown={(e) => { if (e.key === "Escape") setEditingTerms(false); }}
+                rows={3}
+                style={editTextareaStyle}
+              />
+            ) : (
+              <div onClick={startEditTerms} title="לחץ לעריכה" style={{ cursor: "text", display: "flex", alignItems: "flex-start", gap: 4 }}>
+                <span style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6, flex: 1 }}>{quote.terms}</span>
+                <span style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Comments */}
-        {quote.comments && (
+        {/* Comments + warranty — editable */}
+        {combinedNotes && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>הערות</div>
-            <div style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6 }}>{quote.comments}</div>
+            {editingComments ? (
+              <textarea
+                autoFocus
+                value={commentsDraft}
+                onChange={(e) => setCommentsDraft(e.target.value)}
+                onBlur={commitComments}
+                onKeyDown={(e) => { if (e.key === "Escape") setEditingComments(false); }}
+                rows={4}
+                style={editTextareaStyle}
+              />
+            ) : (
+              <div onClick={startEditComments} title="לחץ לעריכה" style={{ cursor: "text", display: "flex", alignItems: "flex-start", gap: 4 }}>
+                <span style={{ fontSize: "12px", color: "#4b5563", lineHeight: 1.6, flex: 1, whiteSpace: "pre-wrap" }}>{combinedNotes}</span>
+                <span style={{ fontSize: "12px", color: "#a78bfa", flexShrink: 0 }}>✏️</span>
+              </div>
+            )}
           </div>
         )}
 
