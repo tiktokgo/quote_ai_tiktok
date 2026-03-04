@@ -35,7 +35,7 @@ interface ChatMessage {
 }
 
 interface ChatPageProps {
-  aiContext: AIContext & { quote_id?: string };
+  aiContext: AIContext & { user_id?: string };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -247,7 +247,7 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
       const res = await fetch("/api/approve-quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quote_id: aiContext.quote_id, quote }),
+        body: JSON.stringify({ user_id: aiContext.user_id, quote }),
       });
       const data = await res.json() as { ok: boolean };
       setApproveState(data.ok ? "done" : "error");
@@ -256,7 +256,7 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
       setApproveState("error");
       setTimeout(() => setApproveState("idle"), 3000);
     }
-  }, [aiContext.quote_id, quote]);
+  }, [aiContext.user_id, quote]);
 
   return (
     // Outer: LTR flex so quote panel is physically on the LEFT

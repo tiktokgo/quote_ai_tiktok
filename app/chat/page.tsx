@@ -7,8 +7,8 @@ interface PageProps {
 
 export default async function ChatRoute({ searchParams }: PageProps) {
   const params = await searchParams;
-  const token   = typeof params.token    === "string" ? params.token    : "";
-  const quoteId = typeof params.quote_id === "string" ? params.quote_id : undefined;
+  const token  = typeof params.token   === "string" ? params.token   : "";
+  const userId = typeof params.user_id === "string" ? params.user_id : undefined;
 
   const result = verifyToken(token);
 
@@ -27,5 +27,5 @@ export default async function ChatRoute({ searchParams }: PageProps) {
     );
   }
 
-  return <ChatPage aiContext={{ ...result.payload, quote_id: quoteId }} />;
+  return <ChatPage aiContext={{ ...result.payload, user_id: userId }} />;
 }

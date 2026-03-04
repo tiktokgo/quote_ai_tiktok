@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     user_name?: string;
     company_info?: string;
     company_logo?: string;
-    quote_id?: string;
+    user_id?: string;
     expiresInHours?: number;
   };
 
@@ -59,8 +59,8 @@ export async function POST(req: NextRequest) {
 
   const token = jwt.sign(payload, jwtSecret, { expiresIn: expiresInSeconds });
 
-  const chatUrl = body.quote_id
-    ? `/chat?token=${token}&quote_id=${encodeURIComponent(body.quote_id)}`
+  const chatUrl = body.user_id
+    ? `/chat?token=${token}&user_id=${encodeURIComponent(body.user_id)}`
     : `/chat?token=${token}`;
 
   return new Response(
