@@ -79,71 +79,6 @@ interface ChatMessage {
   content: string;
 }
 
-/** Map internal PartialQuote to the slim fields Bubble expects */
-function toBubblePayload(quote_id: string | undefined, quote: PartialQuote): Record<string, unknown> {
-  const payload: Record<string, unknown> = {};
-  if (quote_id)               payload.quote_id       = quote_id;
-  if (quote.title)            payload.title          = quote.title;
-  if (quote.client?.name)     payload.client_name    = quote.client.name;
-  if (quote.client?.address)  payload.client_address = quote.client.address;
-  if (quote.items && quote.items.length > 0) {
-    payload.items = quote.items
-      .filter((item) => item.name || item.description)
-      .map((item) => ({
-        name:        item.name ?? "",
-        description: item.description ?? "",
-      }));
-  }
-  if (quote.total    !== undefined)  payload.total      = quote.total;
-  if (quote.has_tax  !== undefined)  payload.has_tax    = quote.has_tax;
-  if (quote.tax_amount !== undefined) payload.tax_amount = quote.tax_amount;
-  if (quote.warranty)                payload.warranty   = quote.warranty;
-  if (quote.terms)                   payload.terms      = quote.terms;
-  if (quote.comments !== undefined && quote.comments !== "") payload.comments = quote.comments;
-  return payload;
-}
-
-async function notifyBubble(
-  quote_id: string | undefined,
-  quote: PartialQuote
-): Promise<{ ok: boolean; message: string }> {
-  const url = process.env.BUBBLE_WEBHOOK_URL;
-  const key = process.env.BUBBLE_API_KEY;
-  if (!url) {
-    console.warn("Bubble webhook skipped: BUBBLE_WEBHOOK_URL not set");
-    return { ok: false, message: "BUBBLE_WEBHOOK_URL not configured" };
-  }
-
-  const payload = toBubblePayload(quote_id, quote);
-  const meaningfulKeys = Object.keys(payload).filter((k) => k !== "quote_id");
-  if (meaningfulKeys.length === 0) {
-    console.log("Bubble webhook skipped: no new data to send");
-    return { ok: false, message: "No data to send" };
-  }
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(key ? { Authorization: `Bearer ${key}` } : {}),
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(`Bubble webhook failed: HTTP ${res.status} — ${body}`);
-      return { ok: false, message: `HTTP ${res.status}: ${body.slice(0, 120)}` };
-    }
-    console.log(`Bubble webhook OK: HTTP ${res.status}`);
-    return { ok: true, message: quote_id ? `ok (quote_id: ${quote_id})` : "ok (no quote_id)" };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("Bubble webhook network error:", msg);
-    return { ok: false, message: msg };
-  }
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -154,7 +89,6 @@ export async function POST(req: NextRequest) {
     };
 
     const { messages, aiContext, currentQuote } = body;
-    const quote_id = aiContext.quote_id;
 
     if (!messages || !aiContext) {
       return new Response(JSON.stringify({ error: "Missing messages or aiContext" }), {
@@ -240,10 +174,8 @@ export async function POST(req: NextRequest) {
               toolCallBuffer = "";
               toolCallName = "";
             } else if (finishReason === "stop") {
-              const hasDraft = Array.isArray((currentQuote as Record<string, unknown>)?.items) &&
-                ((currentQuote as Record<string, unknown>).items as unknown[]).length > 0;
-              const looksLikeFalseUpdate = hasDraft &&
-                /\b(עדכנתי|הוספתי|שמרתי|נרשם|הצעה עכשיו|הצעה כוללת)\b/i.test(textBuffer ?? "");
+              const looksLikeFalseUpdate =
+                /(עדכנתי|הוספתי|שמרתי|נרשם|הצעה עכשיו|הצעה כוללת|כוללת את הפריטים|הפריטים הבאים|הכנתי טיוטת|יצרתי הצעת)/i.test(textBuffer ?? "");
 
               if (looksLikeFalseUpdate) {
                 try {
@@ -264,7 +196,7 @@ export async function POST(req: NextRequest) {
                     const hasNewData = args.client?.name || args.client?.address || args.total || args.comments;
                     if (hasNewData) {
                       console.log(`[force_extract] name:${args.client?.name} addr:${args.client?.address} total:${args.total}`);
-                      if (textBuffer) send({ type: "text", content: textBuffer });
+                      if (textBuffer) send({ type: "text", content: firstSentences(textBuffer, 2) });
                       send({ type: "quote_update", quote: args });
                       textBuffer = "";
                     }
