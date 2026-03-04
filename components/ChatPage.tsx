@@ -267,6 +267,7 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
           <QuotePanel
             quote={quote}
             companyName={aiContext.company_name}
+            companyLogo={aiContext.company_logo}
             onApprove={handleApprove}
             approveState={approveState}
             onTitleChange={handleTitleChange}
@@ -457,6 +458,7 @@ function SparkleIcon() {
 function QuotePanel({
   quote,
   companyName,
+  companyLogo,
   onApprove,
   approveState,
   onTitleChange,
@@ -464,6 +466,7 @@ function QuotePanel({
 }: {
   quote: Partial<Quote>;
   companyName: string;
+  companyLogo?: string;
   onApprove: () => void;
   approveState: "idle" | "loading" | "done" | "error";
   onTitleChange: (title: string) => void;
@@ -485,19 +488,48 @@ function QuotePanel({
     <div dir="rtl" style={{ flex: 1, overflowY: "auto", background: "#ffffff", color: "#1a1a2e", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "24px 20px", maxWidth: "100%" }}>
 
+        {/* Company box */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 18,
+          padding: "12px 14px",
+          background: "#f9fafb",
+          borderRadius: 10,
+          border: "1px solid #e5e7eb",
+        }}>
+          {companyLogo ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={companyLogo}
+              alt={companyName}
+              style={{ width: 48, height: 48, borderRadius: 8, objectFit: "contain", flexShrink: 0, background: "#fff", border: "1px solid #e5e7eb" }}
+            />
+          ) : (
+            <div style={{
+              width: 48, height: 48, borderRadius: 8, background: "#ede9fe",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "20px", fontWeight: 800, color: "#7c3aed", flexShrink: 0,
+            }}>
+              {companyName.charAt(0)}
+            </div>
+          )}
+          <div>
+            <div style={{ fontSize: "15px", fontWeight: 700, color: "#111827" }}>{companyName}</div>
+            {quote.date && (
+              <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: 2 }}>
+                {new Date(quote.date).toLocaleDateString("he-IL")}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Document header */}
         <div style={{ textAlign: "center", marginBottom: 20, paddingBottom: 16, borderBottom: "2px solid #7c3aed" }}>
           <div style={{ fontSize: "20px", fontWeight: 800, color: "#1e1b4b", letterSpacing: -0.5 }}>
             הצעת מחיר
           </div>
-          <div style={{ fontSize: "13px", color: "#6b7280", marginTop: 4, fontWeight: 600 }}>
-            {companyName}
-          </div>
-          {quote.date && (
-            <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: 4 }}>
-              {new Date(quote.date).toLocaleDateString("he-IL")}
-            </div>
-          )}
         </div>
 
         {/* Title — inline editable */}

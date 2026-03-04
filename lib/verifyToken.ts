@@ -5,6 +5,7 @@ export interface AIContext {
   user_name?: string;
   service_area?: string;
   company_info?: string;
+  company_logo?: string;
   industry: string;
 }
 
@@ -35,10 +36,11 @@ export function verifyToken(
       valid: true,
       payload: {
         company_name: payload.company_name,
-        user_name: payload.user_name,
+        user_name:    payload.user_name,
         service_area: payload.service_area,
         company_info: payload.company_info,
-        industry: payload.industry,
+        company_logo: payload.company_logo,
+        industry:     payload.industry,
       },
     };
   } catch (err) {

@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
     company_name?: string;
     user_name?: string;
     company_info?: string;
+    company_logo?: string;
     quote_id?: string;
     expiresInHours?: number;
   };
@@ -53,6 +54,7 @@ export async function POST(req: NextRequest) {
     industry:     body.industry,
     user_name:    body.user_name,
     company_info: body.company_info,
+    company_logo: body.company_logo,
   };
 
   const token = jwt.sign(payload, jwtSecret, { expiresIn: expiresInSeconds });
