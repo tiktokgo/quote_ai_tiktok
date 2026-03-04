@@ -212,6 +212,26 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
 
   const hasQuote = (quote.items?.length ?? 0) > 0 || !!quote.title;
 
+  // ── Approve quote → send full quote to Bubble ─────────────────────────────
+  const [approveState, setApproveState] = useState<"idle" | "loading" | "done" | "error">("idle");
+
+  const handleApprove = useCallback(async () => {
+    setApproveState("loading");
+    try {
+      const res = await fetch("/api/approve-quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quote_id: aiContext.quote_id, quote }),
+      });
+      const data = await res.json() as { ok: boolean };
+      setApproveState(data.ok ? "done" : "error");
+      if (data.ok) setTimeout(() => setApproveState("idle"), 3000);
+    } catch {
+      setApproveState("error");
+      setTimeout(() => setApproveState("idle"), 3000);
+    }
+  }, [aiContext.quote_id, quote]);
+
   return (
     // Outer: LTR flex so quote panel is physically on the LEFT
     <div style={{
@@ -234,7 +254,14 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
         display: "flex",
         flexDirection: "column",
       }}>
-        {hasQuote && <QuotePanel quote={quote} companyName={aiContext.company_name} />}
+        {hasQuote && (
+          <QuotePanel
+            quote={quote}
+            companyName={aiContext.company_name}
+            onApprove={handleApprove}
+            approveState={approveState}
+          />
+        )}
       </div>
 
       {/* ── RIGHT: Chat panel (dark) ─────────────────────────────────────── */}
@@ -404,10 +431,31 @@ export default function ChatPage({ aiContext }: ChatPageProps) {
   );
 }
 
-// ── Quote Panel — white document design ───────────────────────────────────────
-function QuotePanel({ quote, companyName }: { quote: Partial<Quote>; companyName: string }) {
+// ── Sparkle SVG icon ──────────────────────────────────────────────────────────
+function SparkleIcon() {
   return (
-    <div dir="rtl" style={{ flex: 1, overflowY: "auto", background: "#ffffff", color: "#1a1a2e" }}>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <path d="M12 2L13.5 8.5L20 10L13.5 11.5L12 18L10.5 11.5L4 10L10.5 8.5L12 2Z" fill="white" opacity="0.95"/>
+      <path d="M19 2L19.8 5.2L23 6L19.8 6.8L19 10L18.2 6.8L15 6L18.2 5.2L19 2Z" fill="white" opacity="0.7"/>
+      <path d="M5 16L5.6 18.4L8 19L5.6 19.6L5 22L4.4 19.6L2 19L4.4 18.4L5 16Z" fill="white" opacity="0.7"/>
+    </svg>
+  );
+}
+
+// ── Quote Panel — white document design ───────────────────────────────────────
+function QuotePanel({
+  quote,
+  companyName,
+  onApprove,
+  approveState,
+}: {
+  quote: Partial<Quote>;
+  companyName: string;
+  onApprove: () => void;
+  approveState: "idle" | "loading" | "done" | "error";
+}) {
+  return (
+    <div dir="rtl" style={{ flex: 1, overflowY: "auto", background: "#ffffff", color: "#1a1a2e", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "24px 20px", maxWidth: "100%" }}>
 
         {/* Document header */}
@@ -526,6 +574,55 @@ function QuotePanel({ quote, companyName }: { quote: Partial<Quote>; companyName
           </div>
         )}
 
+        {/* Spacer so content doesn't hide behind sticky button */}
+        <div style={{ height: 80 }} />
+
+      </div>
+
+      {/* ── Floating approve button ── */}
+      <div style={{
+        position: "sticky",
+        bottom: 0,
+        background: "linear-gradient(to top, #ffffff 70%, transparent)",
+        padding: "16px 20px 20px",
+        display: "flex",
+        justifyContent: "center",
+      }}>
+        <button
+          onClick={onApprove}
+          disabled={approveState === "loading" || approveState === "done"}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "13px 28px",
+            borderRadius: 50,
+            border: "none",
+            background: approveState === "done"
+              ? "linear-gradient(135deg, #10b981, #059669)"
+              : approveState === "error"
+              ? "linear-gradient(135deg, #ef4444, #dc2626)"
+              : "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
+            color: "#fff",
+            fontSize: "15px",
+            fontWeight: 700,
+            cursor: approveState === "loading" || approveState === "done" ? "default" : "pointer",
+            boxShadow: "0 4px 24px rgba(139,92,246,0.45)",
+            transition: "transform 0.15s, box-shadow 0.15s, background 0.3s",
+            transform: approveState === "loading" ? "scale(0.97)" : "scale(1)",
+            letterSpacing: 0.3,
+          }}
+        >
+          {approveState === "loading" ? (
+            <span style={{ opacity: 0.85 }}>שולח...</span>
+          ) : approveState === "done" ? (
+            <>✓ נשלח בהצלחה</>
+          ) : approveState === "error" ? (
+            <>✕ שגיאה, נסה שוב</>
+          ) : (
+            <><SparkleIcon /> אשר וצור הצעה</>
+          )}
+        </button>
       </div>
     </div>
   );

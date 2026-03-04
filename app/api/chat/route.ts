@@ -234,8 +234,6 @@ export async function POST(req: NextRequest) {
                   send({ type: "text", content: nextMissingField(currentQuote, args) });
                 }
 
-                const webhookResult = await notifyBubble(quote_id, args);
-                send({ type: "webhook_status", ok: webhookResult.ok, message: webhookResult.message });
               } catch (e) {
                 console.warn("Malformed tool args from GPT:", toolCallBuffer.slice(0, 200), e);
               }
@@ -268,8 +266,6 @@ export async function POST(req: NextRequest) {
                       console.log(`[force_extract] name:${args.client?.name} addr:${args.client?.address} total:${args.total}`);
                       if (textBuffer) send({ type: "text", content: textBuffer });
                       send({ type: "quote_update", quote: args });
-                      const webhookResult = await notifyBubble(quote_id, args);
-                      send({ type: "webhook_status", ok: webhookResult.ok, message: webhookResult.message });
                       textBuffer = "";
                     }
                   }
