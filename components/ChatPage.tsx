@@ -332,18 +332,24 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
         redirectTimerRef.current = setTimeout(() => {
           redirectTimerRef.current = null;
+          const inIframe = window.parent !== window;
           if (isGuest && guestRedirectUrl) {
-            // New user: redirect to URL returned by the onboarding API
-            window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
-            window.location.href = guestRedirectUrl;
+            if (inIframe) {
+              window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
+            } else {
+              window.location.href = guestRedirectUrl;
+            }
           } else {
             const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
             if (base && id) {
               const url = base + id;
-              window.parent.postMessage({ type: "quote_redirect", url }, "*");
-              window.location.href = url; // fallback for non-iframe use
+              if (inIframe) {
+                window.parent.postMessage({ type: "quote_redirect", url }, "*");
+              } else {
+                window.location.href = url;
+              }
             } else {
-              setApproveState("idle"); // no redirect configured — close overlay
+              setApproveState("idle");
             }
           }
         }, 11000);
