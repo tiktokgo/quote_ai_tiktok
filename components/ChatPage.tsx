@@ -147,7 +147,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               });
             } else if (event.type === "quote_update" && event.quote) {
               setQuote((prev) => mergeQuote(prev, event.quote!));
-              if (isMobileRef.current) setMobileView("preview");
+              setMobileView("preview");
             } else if (event.type === "done") {
               setMessages((prev) => {
                 const updated = [...prev];
@@ -954,11 +954,13 @@ function QuotePanel({
         )}
 
         {/* Total */}
-        {quote.total !== undefined && quote.total > 0 && (
+        {quote.total !== undefined && (
           <div style={{ marginBottom: 18, padding: "14px 16px", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "13px", color: "#7c3aed", fontWeight: 600 }}>סה&quot;כ לתשלום</span>
-              <span style={{ fontSize: "20px", fontWeight: 800, color: "#5b21b6" }}>{formatILS(quote.total)}</span>
+              <span style={{ fontSize: "20px", fontWeight: 800, color: quote.total > 0 ? "#5b21b6" : "#a78bfa" }}>
+                {quote.total > 0 ? formatILS(quote.total) : "מחיר יעודכן"}
+              </span>
             </div>
             {quote.has_tax !== undefined && (
               <div style={{ fontSize: "11px", color: "#8b5cf6", marginTop: 6, textAlign: "left" }}>
