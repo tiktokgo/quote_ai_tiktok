@@ -260,7 +260,7 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
   }, []);
 
   const handleUpdateTerms = useCallback((terms: string) => {
-    setQuote((prev) => ({ ...prev, terms, warranty: "" }));
+    setQuote((prev) => ({ ...prev, terms, warranty: "" })); // warranty merged into terms on manual edit
   }, []);
 
   const handleUpdateComments = useCallback((comments: string) => {
@@ -270,6 +270,9 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
   const [approveState, setApproveState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [countdown, setCountdown] = useState(6);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
 
   const handleApprove = useCallback(async () => {
     setApproveState("loading");
@@ -299,12 +302,19 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
         setApproveState("success");
         setCountdown(6);
         let secs = 6;
-        const interval = setInterval(() => {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        countdownRef.current = setInterval(() => {
           secs -= 1;
           setCountdown(secs);
           if (secs <= 0) {
-            clearInterval(interval);
-            doRedirect(id);
+            clearInterval(countdownRef.current!);
+            countdownRef.current = null;
+            const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
+            if (base && id) {
+              window.location.href = base + id;
+            } else {
+              setApproveState("idle"); // no redirect configured — close overlay
+            }
           }
         }, 1000);
       } else {
@@ -317,10 +327,6 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
     }
   }, [aiContext, isGuest, guestInfo, quote]);
 
-  const doRedirect = useCallback((id: string | undefined) => {
-    const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
-    if (base && id) window.location.href = base + id;
-  }, []);
 
 
   // ── Guest form (no token) ──────────────────────────────────────────────────
@@ -946,7 +952,7 @@ function QuotePanel({
         )}
 
         {/* Total */}
-        {quote.total !== undefined && (
+        {quote.total !== undefined && quote.total > 0 && (
           <div style={{ marginBottom: 18, padding: "14px 16px", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "13px", color: "#7c3aed", fontWeight: 600 }}>סה&quot;כ לתשלום</span>
