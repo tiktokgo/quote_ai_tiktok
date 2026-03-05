@@ -455,56 +455,13 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           boxSizing: "border-box",
         }}>
 
-          {/* ── Chat preview card (clear, unblurred) ── */}
-          <div style={{
-            background: "rgba(15,12,40,0.82)",
-            border: "1px solid rgba(139,92,246,0.3)",
-            borderRadius: 16,
-            padding: "14px 16px",
-            backdropFilter: "blur(20px)",
-            boxShadow: "0 4px 32px rgba(0,0,0,0.4)",
-            marginBottom: 10,
-          }}>
-            {/* Chat header */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, paddingBottom: 10, borderBottom: "1px solid rgba(139,92,246,0.18)" }}>
-              <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg,#7c3aed,#ec4899)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>🤖</div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#c4b5fd" }}>עוזר הצעות מחיר AI</div>
-                <div style={{ fontSize: 10, color: "rgba(196,181,253,0.5)" }}>מחובר ● זמין 24/7</div>
-              </div>
-            </div>
-
-            {/* Sample conversation */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {/* AI message 1 */}
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                <div style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg,#7c3aed,#a855f7)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>🤖</div>
-                <div style={{ background: "rgba(139,92,246,0.22)", borderRadius: "4px 14px 14px 14px", padding: "8px 12px", maxWidth: "82%", fontSize: 12.5, color: "#e2e8f0", lineHeight: 1.45, border: "1px solid rgba(139,92,246,0.2)" }}>
-                  שלום! ספר לי על הפרויקט ואני אכין הצעת מחיר מקצועית מיד ✨
-                </div>
-              </div>
-              {/* User message */}
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <div style={{ background: "rgba(255,255,255,0.09)", borderRadius: "14px 4px 14px 14px", padding: "8px 12px", maxWidth: "78%", fontSize: 12.5, color: "#e2e8f0", lineHeight: 1.45, border: "1px solid rgba(255,255,255,0.08)" }}>
-                  צריך הצעה לשיפוץ מטבח ברחוב הרצל 5
-                </div>
-              </div>
-              {/* AI message 2 */}
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                <div style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg,#7c3aed,#a855f7)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>🤖</div>
-                <div style={{ background: "rgba(139,92,246,0.22)", borderRadius: "4px 14px 14px 14px", padding: "8px 12px", maxWidth: "82%", fontSize: 12.5, color: "#e2e8f0", lineHeight: 1.45, border: "1px solid rgba(139,92,246,0.2)" }}>
-                  הכנתי טיוטת הצעה — בדוק אותה 📋 מה שם הלקוח?
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* ── Form box ── */}
           <div style={{
             background: "rgba(15,12,40,0.9)", border: "1px solid rgba(139,92,246,0.38)",
             borderRadius: 16, padding: "26px 24px",
             backdropFilter: "blur(20px)",
             boxShadow: "0 8px 48px rgba(0,0,0,0.55)",
+            marginBottom: 10,
           }}>
             <div style={{ textAlign: "center", marginBottom: 22 }}>
               <div style={{ fontSize: "22px", fontWeight: 800, color: "#c4b5fd", letterSpacing: "-0.3px" }}>יוצרים הצעת מחיר בקלות</div>
@@ -549,6 +506,45 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               <span>🏆</span>
               <span>צרו הצעה מנצחת</span>
             </button>
+          </div>
+
+          {/* ── Chat preview card ── */}
+          <div style={{
+            background: "rgba(5,3,18,0.6)",
+            border: "1px solid rgba(99,60,220,0.22)",
+            borderRadius: 14,
+            padding: "12px 14px",
+            backdropFilter: "blur(12px)",
+            boxShadow: "0 2px 16px rgba(0,0,0,0.3)",
+          }}>
+            {/* Chat header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid rgba(99,60,220,0.15)" }}>
+              <div style={{ width: 24, height: 24, borderRadius: "50%", background: "linear-gradient(135deg,#6d28d9,#db2777)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🤖</div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa" }}>עוזר הצעות מחיר AI</div>
+                <div style={{ fontSize: 9, color: "rgba(167,139,250,0.45)" }}>מחובר ● זמין 24/7</div>
+              </div>
+            </div>
+            {/* Sample conversation */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              <div style={{ display: "flex", gap: 7, alignItems: "flex-end" }}>
+                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "linear-gradient(135deg,#6d28d9,#9333ea)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🤖</div>
+                <div style={{ background: "rgba(109,40,217,0.18)", borderRadius: "3px 12px 12px 12px", padding: "7px 10px", maxWidth: "82%", fontSize: 12, color: "rgba(226,232,240,0.85)", lineHeight: 1.4, border: "1px solid rgba(109,40,217,0.18)" }}>
+                  שלום! ספר לי על הפרויקט ואני אכין הצעה מקצועית מיד ✨
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ background: "rgba(255,255,255,0.06)", borderRadius: "12px 3px 12px 12px", padding: "7px 10px", maxWidth: "78%", fontSize: 12, color: "rgba(226,232,240,0.75)", lineHeight: 1.4, border: "1px solid rgba(255,255,255,0.06)" }}>
+                  צריך הצעה לשיפוץ מטבח ברחוב הרצל 5
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 7, alignItems: "flex-end" }}>
+                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "linear-gradient(135deg,#6d28d9,#9333ea)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🤖</div>
+                <div style={{ background: "rgba(109,40,217,0.18)", borderRadius: "3px 12px 12px 12px", padding: "7px 10px", maxWidth: "82%", fontSize: 12, color: "rgba(226,232,240,0.85)", lineHeight: 1.4, border: "1px solid rgba(109,40,217,0.18)" }}>
+                  הכנתי טיוטת הצעה — בדוק אותה 📋 מה שם הלקוח?
+                </div>
+              </div>
+            </div>
           </div>
 
         </div>
