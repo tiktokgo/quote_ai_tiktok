@@ -490,6 +490,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             onUpdateComments={handleUpdateComments}
             onUpdateTotal={handleUpdateTotal}
             onUpdateAddress={handleUpdateAddress}
+            onBackToChat={isMobile ? () => setMobileView("chat") : undefined}
           />
         )}
       </div>
@@ -785,6 +786,7 @@ function QuotePanel({
   onUpdateComments,
   onUpdateTotal,
   onUpdateAddress,
+  onBackToChat,
 }: {
   quote: Partial<Quote>;
   companyName: string;
@@ -798,6 +800,7 @@ function QuotePanel({
   onUpdateComments: (comments: string) => void;
   onUpdateTotal: (total: number) => void;
   onUpdateAddress: (address: string) => void;
+  onBackToChat?: () => void;
   approveLabel?: string;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
@@ -1171,7 +1174,7 @@ function QuotePanel({
       {/* ── Floating approve button ── */}
       {(() => {
         const canApprove = (quote.items?.length ?? 0) > 0 && (quote.total ?? 0) > 0;
-        const isDisabled = (approveState !== "idle" && approveState !== "error") || !canApprove;
+        const isBusy = approveState === "loading" || approveState === "success";
         const helperText = !canApprove
           ? ((quote.items?.length ?? 0) === 0 ? "ממתין לפריטי עבודה..." : "עדכן מחיר כדי להמשיך")
           : "נעביר אותך לעמוד תצוגה ושיתוף ההצעה";
@@ -1187,8 +1190,12 @@ function QuotePanel({
             gap: 6,
           }}>
             <button
-              onClick={canApprove ? onApprove : undefined}
-              disabled={isDisabled}
+              onClick={() => {
+                if (isBusy) return;
+                if (canApprove) onApprove();
+                else onBackToChat?.();
+              }}
+              disabled={isBusy}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1202,7 +1209,7 @@ function QuotePanel({
                 color: "#fff",
                 fontSize: "17px",
                 fontWeight: 700,
-                cursor: !isDisabled ? "pointer" : "default",
+                cursor: !isBusy ? "pointer" : "default",
                 boxShadow: canApprove ? "0 4px 24px rgba(139,92,246,0.45)" : "none",
                 opacity: !canApprove && approveState === "idle" ? 0.4 : 1,
                 transition: "transform 0.15s, box-shadow 0.15s, background 0.3s, opacity 0.2s",
