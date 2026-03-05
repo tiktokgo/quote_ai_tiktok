@@ -333,13 +333,18 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         redirectTimerRef.current = setTimeout(() => {
           redirectTimerRef.current = null;
           const inIframe = window.parent !== window;
-          if (isGuest && guestRedirectUrl) {
-            if (inIframe) {
-              window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
-            } else {
-              window.location.href = guestRedirectUrl;
+          if (isGuest) {
+            // New user: redirect only to the URL returned by the onboarding API
+            if (guestRedirectUrl) {
+              if (inIframe) {
+                window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
+              } else {
+                window.location.href = guestRedirectUrl;
+              }
             }
+            // If no redirect_url returned, stay on page (do nothing)
           } else {
+            // Existing user: redirect using NEXT_PUBLIC_REDIRECT_BASE + quote_id
             const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
             if (base && id) {
               const url = base + id;
