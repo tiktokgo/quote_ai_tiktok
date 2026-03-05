@@ -16,5 +16,6 @@ export default async function ChatRoute({ searchParams }: PageProps) {
     return <ChatPage isGuest={true} />;
   }
 
-  return <ChatPage aiContext={{ ...result.payload, user_id: userId }} token={token} />;
+  // user_id from JWT takes priority; fall back to URL param for old tokens
+  return <ChatPage aiContext={{ ...result.payload, user_id: result.payload.user_id ?? userId }} token={token} />;
 }

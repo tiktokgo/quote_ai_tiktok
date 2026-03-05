@@ -7,6 +7,7 @@ export interface AIContext {
   company_info?: string;
   company_logo?: string;
   industry: string;
+  user_id?: string;
 }
 
 interface TokenPayload extends AIContext {
@@ -41,6 +42,7 @@ export function verifyToken(
         company_info: payload.company_info,
         company_logo: payload.company_logo,
         industry:     payload.industry,
+        user_id:      payload.user_id,
       },
     };
   } catch (err) {

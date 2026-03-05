@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
       messages: ChatMessage[];
-      aiContext: AIContext & { quote_id?: string };
+      aiContext: AIContext;
       currentQuote?: Partial<Quote>;
       token?: string;
     };
