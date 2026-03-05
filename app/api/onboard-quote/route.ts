@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     }));
   }
   if (quote.total      !== undefined) payload.total      = quote.total;
-  if (quote.has_tax    !== undefined) payload.has_tax    = quote.has_tax;
+  payload.has_tax = quote.has_tax ?? false;
   if (quote.tax_amount !== undefined) payload.tax_amount = quote.tax_amount;
   if (quote.warranty)                 payload.warranty   = quote.warranty;
   if (quote.terms)                    payload.terms      = quote.terms;
@@ -65,13 +65,15 @@ export async function POST(req: NextRequest) {
     }
 
     let quote_id: string | undefined;
+    let redirect_url: string | undefined;
     try {
       const json = JSON.parse(responseText);
       quote_id = json.quote_id ?? json.response?.quote_id;
+      redirect_url = json.redirect_url ?? json.response?.redirect_url;
     } catch { /* ignore */ }
 
-    console.log(`Onboard webhook OK: HTTP ${res.status} email:${email} quote_id:${quote_id}`);
-    return new Response(JSON.stringify({ ok: true, quote_id }), {
+    console.log(`Onboard webhook OK: HTTP ${res.status} email:${email} quote_id:${quote_id} redirect_url:${redirect_url}`);
+    return new Response(JSON.stringify({ ok: true, quote_id, redirect_url }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

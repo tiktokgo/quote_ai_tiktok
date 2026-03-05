@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     }));
   }
   if (quote.total      !== undefined) payload.total      = quote.total;
-  if (quote.has_tax    !== undefined) payload.has_tax    = quote.has_tax;
+  payload.has_tax = quote.has_tax ?? false;
   if (quote.tax_amount !== undefined) payload.tax_amount = quote.tax_amount;
   if (quote.warranty)                 payload.warranty   = quote.warranty;
   if (quote.terms)                    payload.terms      = quote.terms;

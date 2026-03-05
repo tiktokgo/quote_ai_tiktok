@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
                     { function?: { arguments?: string } } | undefined;
                   if (toolCall?.function?.arguments) {
                     const args = JSON.parse(toolCall.function.arguments) as PartialQuote;
-                    const hasNewData = args.client?.name || args.client?.address || args.total || args.comments;
+                    const hasNewData = args.client?.name || args.client?.address || args.total || args.comments || (args.items && args.items.length > 0);
                     if (hasNewData) {
                       console.log(`[force_extract] name:${args.client?.name} addr:${args.client?.address} total:${args.total}`);
                       if (textBuffer) send({ type: "text", content: firstSentences(textBuffer, 2) });

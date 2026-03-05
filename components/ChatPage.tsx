@@ -301,6 +301,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     setApproveState("loading");
     try {
       let res: Response;
+      const quoteWithTax = { ...quote, has_tax: quote.has_tax ?? false };
       if (isGuest && guestInfo) {
         res = await fetch("/api/onboard-quote", {
           method: "POST",
@@ -309,19 +310,20 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             company_name: guestInfo.company_name,
             email:        guestInfo.email,
             industry:     guestInfo.industry,
-            quote,
+            quote:        quoteWithTax,
           }),
         });
       } else {
         res = await fetch("/api/approve-quote", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: aiContext?.user_id, quote }),
+          body: JSON.stringify({ user_id: aiContext?.user_id, quote: quoteWithTax }),
         });
       }
-      const data = await res.json() as { ok: boolean; quote_id?: string };
+      const data = await res.json() as { ok: boolean; quote_id?: string; redirect_url?: string };
       if (data.ok) {
         const id = data.quote_id;
+        const guestRedirectUrl = data.redirect_url;
         setQuoteId(id);
         setReviewStars(0);
         setReviewComment("");
@@ -330,13 +332,19 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
         redirectTimerRef.current = setTimeout(() => {
           redirectTimerRef.current = null;
-          const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
-          if (base && id) {
-            const url = base + id;
-            window.parent.postMessage({ type: "quote_redirect", url }, "*");
-            window.location.href = url; // fallback for non-iframe use
+          if (isGuest && guestRedirectUrl) {
+            // New user: redirect to URL returned by the onboarding API
+            window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
+            window.location.href = guestRedirectUrl;
           } else {
-            setApproveState("idle"); // no redirect configured — close overlay
+            const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
+            if (base && id) {
+              const url = base + id;
+              window.parent.postMessage({ type: "quote_redirect", url }, "*");
+              window.location.href = url; // fallback for non-iframe use
+            } else {
+              setApproveState("idle"); // no redirect configured — close overlay
+            }
           }
         }, 11000);
       } else {
@@ -356,19 +364,99 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     const canSubmit = guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim();
     return (
       <div dir="rtl" style={{
+        position: "relative",
         display: "flex", alignItems: "center", justifyContent: "center",
         height: "100dvh",
+        overflow: "hidden",
         background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
       }}>
+        {/* ── Blurred app preview background ── */}
         <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", flexDirection: "row",
+          filter: "blur(5px)",
+          transform: "scale(1.04)",
+          pointerEvents: "none",
+          userSelect: "none",
+          direction: "ltr",
+        }}>
+          {/* Left: Quote panel mock */}
+          <div style={{ width: "44%", background: "#fff", display: "flex", flexDirection: "column", padding: "20px 16px", gap: 10, overflow: "hidden" }}>
+            <div style={{ display: "flex", gap: 10, padding: "10px 12px", background: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb" }}>
+              <div style={{ width: 40, height: 40, borderRadius: 6, background: "#ede9fe", flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ height: 11, width: "55%", background: "#d1d5db", borderRadius: 3, marginBottom: 6 }} />
+                <div style={{ height: 8, width: "35%", background: "#e5e7eb", borderRadius: 3 }} />
+              </div>
+            </div>
+            <div style={{ textAlign: "center", paddingBottom: 10, borderBottom: "2px solid #7c3aed" }}>
+              <div style={{ height: 13, width: "40%", background: "#1e1b4b", borderRadius: 3, margin: "0 auto" }} />
+            </div>
+            <div style={{ height: 11, width: "75%", background: "#374151", borderRadius: 3 }} />
+            <div style={{ padding: "9px 11px", background: "#f9fafb", borderRadius: 7, border: "1px solid #e5e7eb" }}>
+              <div style={{ height: 7, width: "28%", background: "#9ca3af", borderRadius: 3, marginBottom: 7 }} />
+              <div style={{ height: 11, width: "58%", background: "#374151", borderRadius: 3, marginBottom: 5 }} />
+              <div style={{ height: 9, width: "42%", background: "#9ca3af", borderRadius: 3 }} />
+            </div>
+            <div style={{ height: 7, width: "22%", background: "#9ca3af", borderRadius: 3 }} />
+            {[53, 68, 45, 72, 60].map((w, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, paddingBottom: 9, borderBottom: "1px solid #f3f4f6", alignItems: "flex-start" }}>
+                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ height: 10, width: `${w}%`, background: "#374151", borderRadius: 3, marginBottom: 4 }} />
+                  <div style={{ height: 8, width: `${w + 12}%`, background: "#9ca3af", borderRadius: 3 }} />
+                </div>
+              </div>
+            ))}
+            <div style={{ padding: "11px 13px", background: "#f5f3ff", borderRadius: 7, border: "1px solid #ddd6fe", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ height: 11, width: "28%", background: "#7c3aed", borderRadius: 3 }} />
+              <div style={{ height: 15, width: "22%", background: "#5b21b6", borderRadius: 3 }} />
+            </div>
+          </div>
+          {/* Right: Chat panel mock */}
+          <div style={{ flex: 1, background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)", display: "flex", flexDirection: "column", padding: "14px 12px", gap: 9, overflow: "hidden" }}>
+            <div style={{ paddingBottom: 10, borderBottom: "1px solid rgba(139,92,246,0.2)", marginBottom: 4 }}>
+              <div style={{ height: 11, width: "42%", background: "#c4b5fd", borderRadius: 3, marginBottom: 5 }} />
+              <div style={{ height: 8, width: "26%", background: "rgba(196,181,253,0.35)", borderRadius: 3 }} />
+            </div>
+            {[
+              { side: "end",   w: "72%" },
+              { side: "start", w: "52%" },
+              { side: "end",   w: "58%" },
+              { side: "start", w: "44%" },
+              { side: "end",   w: "65%" },
+              { side: "start", w: "38%" },
+            ].map((m, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: m.side === "start" ? "flex-start" : "flex-end" }}>
+                <div style={{
+                  padding: "9px 13px", borderRadius: 12,
+                  background: m.side === "start" ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.08)",
+                  width: m.w,
+                }}>
+                  <div style={{ height: 9, background: "rgba(255,255,255,0.28)", borderRadius: 3, marginBottom: 4 }} />
+                  <div style={{ height: 9, width: "65%", background: "rgba(255,255,255,0.18)", borderRadius: 3 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Dark overlay */}
+        <div style={{ position: "absolute", inset: 0, background: "rgba(7,7,26,0.7)", pointerEvents: "none" }} />
+
+        {/* ── Form box ── */}
+        <div style={{
+          position: "relative", zIndex: 10,
           width: "100%", maxWidth: 420, margin: "0 16px",
-          background: "rgba(255,255,255,0.04)", border: "1px solid rgba(139,92,246,0.25)",
+          background: "rgba(15,12,40,0.85)", border: "1px solid rgba(139,92,246,0.35)",
           borderRadius: 16, padding: "36px 28px",
+          backdropFilter: "blur(16px)",
+          boxShadow: "0 8px 48px rgba(0,0,0,0.5)",
         }}>
           <div style={{ textAlign: "center", marginBottom: 28 }}>
             <div style={{ fontSize: "28px", marginBottom: 8 }}>✨</div>
             <div style={{ fontSize: "20px", fontWeight: 800, color: "#c4b5fd" }}>יוצר הצעות מחיר</div>
-            <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.6)", marginTop: 6 }}>מלא את הפרטים ונתחיל</div>
+            <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.6)", marginTop: 6 }}>3 שאלות קצרות ומתחילים</div>
           </div>
           {(["company_name", "email", "industry"] as const).map((field) => (
             <div key={field} style={{ marginBottom: 16 }}>
@@ -666,40 +754,78 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           backdropFilter: "blur(10px)",
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
+          <style>{`
+            @keyframes spin-ring { to { transform: rotate(360deg); } }
+            @keyframes progress-fill { from { width: 0% } to { width: 100% } }
+            @keyframes float-sparkle {
+              0%, 100% { transform: translateY(0) scale(1); opacity: 1; }
+              50% { transform: translateY(-6px) scale(1.08); opacity: 0.85; }
+            }
+            @keyframes fade-cycle-1 { 0%,28%{opacity:1} 33%,100%{opacity:0} }
+            @keyframes fade-cycle-2 { 0%,33%{opacity:0} 38%,61%{opacity:1} 66%,100%{opacity:0} }
+            @keyframes fade-cycle-3 { 0%,66%{opacity:0} 71%,94%{opacity:1} 100%{opacity:0} }
+          `}</style>
           <div style={{
             background: "rgba(255,255,255,0.05)",
             border: "1px solid rgba(139,92,246,0.35)",
-            borderRadius: 20, padding: "36px 28px",
+            borderRadius: 20, padding: "32px 28px",
             maxWidth: 380, width: "90%", textAlign: "center",
           }}>
-            <div style={{ fontSize: 40, marginBottom: 10 }}>✨</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: "#c4b5fd", marginBottom: 6 }}>ההצעה נשמרה!</div>
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}>
-              <style>{`
-                @keyframes spin-ring { to { transform: rotate(360deg); } }
-              `}</style>
-              <div style={{
-                width: 28, height: 28, borderRadius: "50%",
-                border: "3px solid rgba(139,92,246,0.25)",
-                borderTopColor: "#a78bfa",
-                animation: "spin-ring 0.9s linear infinite",
-              }} />
+            {/* Header */}
+            <div style={{ fontSize: 38, marginBottom: 6, animation: "float-sparkle 2.5s ease-in-out infinite" }}>✨</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#c4b5fd", marginBottom: 18 }}>ההצעה נשמרה!</div>
+
+            {/* Creating animation */}
+            <div style={{ marginBottom: 22 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
+                <div style={{
+                  width: 20, height: 20, borderRadius: "50%",
+                  border: "2.5px solid rgba(139,92,246,0.25)",
+                  borderTopColor: "#a78bfa",
+                  animation: "spin-ring 0.85s linear infinite",
+                  flexShrink: 0,
+                }} />
+                <div style={{ position: "relative", height: 20, minWidth: 170 }}>
+                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "#c4b5fd", animation: "fade-cycle-1 9s linear infinite" }}>
+                    מנתח את הנתונים...
+                  </span>
+                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "#c4b5fd", animation: "fade-cycle-2 9s linear infinite" }}>
+                    בונה את ההצעה שלך...
+                  </span>
+                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "#c4b5fd", animation: "fade-cycle-3 9s linear infinite" }}>
+                    מכין לייצוא...
+                  </span>
+                </div>
+              </div>
+              {/* Progress bar */}
+              <div dir="ltr" style={{ background: "rgba(139,92,246,0.15)", borderRadius: 4, height: 5, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%",
+                  background: "linear-gradient(90deg, #7c3aed, #a855f7, #ec4899)",
+                  borderRadius: 4,
+                  animation: "progress-fill 10s linear forwards",
+                }} />
+              </div>
             </div>
 
             {/* Review section */}
             {!reviewSubmitted ? (
               <>
-                <div style={{ fontSize: 14, color: "#c4b5fd", marginBottom: 12 }}>
+                <div style={{ fontSize: 13, color: "rgba(196,181,253,0.6)", marginBottom: 10 }}>
+                  בינתיים — ספר לנו כיצד היה התהליך
+                </div>
+                <div style={{ fontSize: 14, color: "#c4b5fd", marginBottom: 12, fontWeight: 600 }}>
                   איך היה תהליך יצירת ההצעה?
                 </div>
-                {/* Stars */}
-                <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 14 }}>
+                {/* Stars with emoji hints */}
+                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginBottom: 14 }}>
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>😞</span>
                   {[1,2,3,4,5].map((s) => (
                     <span
                       key={s}
                       onClick={() => setReviewStars(s)}
                       style={{
-                        fontSize: 28,
+                        fontSize: 26,
                         cursor: "pointer",
                         color: s <= reviewStars ? "#fbbf24" : "rgba(196,181,253,0.25)",
                         transition: "color 0.15s, transform 0.1s",
@@ -709,6 +835,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                       }}
                     >★</span>
                   ))}
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>😊</span>
                 </div>
                 <textarea
                   value={reviewComment}
