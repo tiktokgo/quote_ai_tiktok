@@ -312,7 +312,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             countdownRef.current = null;
             const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
             if (base && id) {
-              window.location.href = base + id;
+              const url = base + id;
+              window.parent.postMessage({ type: "quote_redirect", url }, "*");
+              window.location.href = url; // fallback for non-iframe use
             } else {
               setApproveState("idle"); // no redirect configured — close overlay
             }
