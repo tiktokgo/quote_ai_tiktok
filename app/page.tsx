@@ -9,7 +9,6 @@ export default function Home() {
         justifyContent: "center",
         background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
         color: "#e2e8f0",
-        fontFamily: "'Segoe UI', Arial, sans-serif",
         padding: "24px",
       }}
     >

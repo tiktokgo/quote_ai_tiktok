@@ -336,7 +336,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     return (
       <div dir="rtl" style={{
         display: "flex", alignItems: "center", justifyContent: "center",
-        height: "100dvh", fontFamily: "'Segoe UI', Arial, sans-serif",
+        height: "100dvh",
         background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
       }}>
         <div style={{
@@ -397,7 +397,6 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       display: "flex",
       flexDirection: "column",
       height: "100dvh",
-      fontFamily: "'Segoe UI', Arial, sans-serif",
       background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
       overflow: "hidden",
     }}>
