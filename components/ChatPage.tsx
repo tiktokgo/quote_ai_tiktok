@@ -268,10 +268,33 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     setQuote((prev) => ({ ...prev, comments }));
   }, []);
 
+  // ── Manual price + address edits (passed to QuotePanel) ──────────────────
+  const handleUpdateTotal = useCallback((total: number) => {
+    setQuote((prev) => ({ ...prev, total }));
+  }, []);
+
+  const handleUpdateAddress = useCallback((address: string) => {
+    setQuote((prev) => ({ ...prev, client: { ...(prev.client ?? {}), address } }));
+  }, []);
+
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
   const [approveState, setApproveState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [countdown, setCountdown] = useState(6);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [quoteId, setQuoteId] = useState<string | undefined>();
+  const [reviewStars, setReviewStars] = useState(0);
+  const [reviewComment, setReviewComment] = useState("");
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
+
+  const handleReviewSubmit = useCallback(async () => {
+    setReviewSubmitted(true);
+    if (reviewStars === 0) return;
+    await fetch("/api/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quote_id: quoteId, user_id: aiContext?.user_id, stars: reviewStars, comment: reviewComment }),
+    }).catch(() => {});
+  }, [reviewStars, reviewComment, quoteId, aiContext?.user_id]);
 
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
 
@@ -300,6 +323,10 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       const data = await res.json() as { ok: boolean; quote_id?: string };
       if (data.ok) {
         const id = data.quote_id;
+        setQuoteId(id);
+        setReviewStars(0);
+        setReviewComment("");
+        setReviewSubmitted(false);
         setApproveState("success");
         setCountdown(6);
         let secs = 6;
@@ -423,9 +450,10 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           ) : (
             <button onClick={() => setMobileView("chat")} style={{
               width: "100%", padding: "10px 0", borderRadius: 50,
-              border: "1px solid rgba(139,92,246,0.45)",
-              background: "rgba(139,92,246,0.1)",
-              color: "#c4b5fd", fontSize: "15px", fontWeight: 700, cursor: "pointer",
+              border: "1px solid rgba(139,92,246,0.7)",
+              background: "rgba(139,92,246,0.15)",
+              color: "#c4b5fd", fontSize: "15px", fontWeight: 800, cursor: "pointer",
+              animation: "pulse-glow 2s ease-in-out infinite",
             }}>
               ← חזרה לשיחה
             </button>
@@ -460,6 +488,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             onUpdateItem={handleUpdateItem}
             onUpdateTerms={handleUpdateTerms}
             onUpdateComments={handleUpdateComments}
+            onUpdateTotal={handleUpdateTotal}
+            onUpdateAddress={handleUpdateAddress}
           />
         )}
       </div>
@@ -646,14 +676,82 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           <div style={{
             background: "rgba(255,255,255,0.05)",
             border: "1px solid rgba(139,92,246,0.35)",
-            borderRadius: 20, padding: "44px 36px",
+            borderRadius: 20, padding: "36px 28px",
             maxWidth: 380, width: "90%", textAlign: "center",
           }}>
-            <div style={{ fontSize: 40, marginBottom: 14 }}>✨</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: "#c4b5fd", marginBottom: 12 }}>ההצעה נשמרה!</div>
-            <div style={{ fontSize: 15, color: "rgba(196,181,253,0.7)" }}>
+            <div style={{ fontSize: 40, marginBottom: 10 }}>✨</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#c4b5fd", marginBottom: 6 }}>ההצעה נשמרה!</div>
+            <div style={{ fontSize: 14, color: "rgba(196,181,253,0.6)", marginBottom: 24 }}>
               מעביר בעוד {countdown} שניות
             </div>
+
+            {/* Review section */}
+            {!reviewSubmitted ? (
+              <>
+                <div style={{ fontSize: 14, color: "#c4b5fd", marginBottom: 12 }}>
+                  איך היה תהליך יצירת ההצעה?
+                </div>
+                {/* Stars */}
+                <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 14 }}>
+                  {[1,2,3,4,5].map((s) => (
+                    <span
+                      key={s}
+                      onClick={() => setReviewStars(s)}
+                      style={{
+                        fontSize: 28,
+                        cursor: "pointer",
+                        color: s <= reviewStars ? "#fbbf24" : "rgba(196,181,253,0.25)",
+                        transition: "color 0.15s, transform 0.1s",
+                        transform: s <= reviewStars ? "scale(1.15)" : "scale(1)",
+                        display: "inline-block",
+                        userSelect: "none",
+                      }}
+                    >★</span>
+                  ))}
+                </div>
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="הערה (לא חובה)"
+                  rows={2}
+                  style={{
+                    width: "100%", borderRadius: 8, padding: "8px 10px",
+                    background: "rgba(255,255,255,0.07)", border: "1px solid rgba(139,92,246,0.3)",
+                    color: "#e2e8f0", fontSize: 13, resize: "none", direction: "rtl",
+                    fontFamily: "inherit", outline: "none", boxSizing: "border-box",
+                    marginBottom: 12,
+                  }}
+                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={handleReviewSubmit}
+                    style={{
+                      flex: 1, padding: "10px 0", borderRadius: 50, border: "none",
+                      background: reviewStars > 0
+                        ? "linear-gradient(135deg, #7c3aed, #a855f7)"
+                        : "rgba(139,92,246,0.2)",
+                      color: "#fff", fontSize: 14, fontWeight: 700,
+                      cursor: reviewStars > 0 ? "pointer" : "default",
+                    }}
+                  >
+                    שלח ביקורת
+                  </button>
+                  <button
+                    onClick={() => setReviewSubmitted(true)}
+                    style={{
+                      flex: 1, padding: "10px 0", borderRadius: 50,
+                      border: "1px solid rgba(139,92,246,0.3)",
+                      background: "transparent",
+                      color: "rgba(196,181,253,0.6)", fontSize: 14, cursor: "pointer",
+                    }}
+                  >
+                    דלג
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 22, color: "#c4b5fd" }}>תודה! 🙏</div>
+            )}
           </div>
         </div>
       )}
@@ -685,6 +783,8 @@ function QuotePanel({
   onUpdateItem,
   onUpdateTerms,
   onUpdateComments,
+  onUpdateTotal,
+  onUpdateAddress,
 }: {
   quote: Partial<Quote>;
   companyName: string;
@@ -696,6 +796,8 @@ function QuotePanel({
   onUpdateItem: (index: number, name: string, description: string) => void;
   onUpdateTerms: (terms: string) => void;
   onUpdateComments: (comments: string) => void;
+  onUpdateTotal: (total: number) => void;
+  onUpdateAddress: (address: string) => void;
   approveLabel?: string;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
@@ -710,6 +812,12 @@ function QuotePanel({
 
   const [editingComments, setEditingComments] = useState(false);
   const [commentsDraft, setCommentsDraft] = useState("");
+
+  const [editingTotal, setEditingTotal] = useState(false);
+  const [totalDraft, setTotalDraft] = useState("");
+
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [addressDraft, setAddressDraft] = useState("");
 
   const startEditTitle = () => { setTitleDraft(quote.title ?? ""); setEditingTitle(true); };
   const commitTitle = () => { setEditingTitle(false); if (titleDraft.trim()) onTitleChange(titleDraft.trim()); };
@@ -842,10 +950,29 @@ function QuotePanel({
             <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
               פרטי לקוח
             </div>
-            {quote.client.name    && <div style={{ fontSize: "14px", fontWeight: 700, color: "#111827" }}>{quote.client.name}</div>}
-            {quote.client.address && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 3 }}>{quote.client.address}</div>}
-            {quote.client.phone   && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.phone}</div>}
-            {quote.client.email   && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.email}</div>}
+            {quote.client?.name && <div style={{ fontSize: "14px", fontWeight: 700, color: "#111827" }}>{quote.client.name}</div>}
+            {/* Address — always editable */}
+            {editingAddress ? (
+              <input
+                autoFocus
+                value={addressDraft}
+                onChange={(e) => setAddressDraft(e.target.value)}
+                onBlur={() => { setEditingAddress(false); if (addressDraft.trim()) onUpdateAddress(addressDraft.trim()); }}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingAddress(false); }}
+                placeholder="הוסף כתובת"
+                style={{ ...editInputStyle, fontSize: "12px", marginTop: 3 }}
+              />
+            ) : (
+              <div
+                onClick={() => { setAddressDraft(quote.client?.address ?? ""); setEditingAddress(true); }}
+                title="לחץ לעריכה"
+                style={{ fontSize: "12px", color: quote.client?.address ? "#6b7280" : "#a78bfa", marginTop: 3, cursor: "pointer" }}
+              >
+                {quote.client?.address || "הוסף כתובת ✏️"}
+              </div>
+            )}
+            {quote.client?.phone && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.phone}</div>}
+            {quote.client?.email && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.email}</div>}
           </div>
         )}
 
@@ -958,9 +1085,29 @@ function QuotePanel({
           <div style={{ marginBottom: 18, padding: "14px 16px", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "13px", color: "#7c3aed", fontWeight: 600 }}>סה&quot;כ לתשלום</span>
-              <span style={{ fontSize: "20px", fontWeight: 800, color: quote.total > 0 ? "#5b21b6" : "#a78bfa" }}>
-                {quote.total > 0 ? formatILS(quote.total) : "מחיר יעודכן"}
-              </span>
+              {editingTotal ? (
+                <input
+                  autoFocus
+                  type="number"
+                  value={totalDraft}
+                  onChange={(e) => setTotalDraft(e.target.value)}
+                  onBlur={() => {
+                    setEditingTotal(false);
+                    const n = parseFloat(totalDraft);
+                    if (!isNaN(n) && n > 0) onUpdateTotal(n);
+                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingTotal(false); }}
+                  style={{ fontSize: "18px", fontWeight: 800, width: 110, textAlign: "right", border: "1px solid #a78bfa", borderRadius: 4, padding: "2px 6px", color: "#5b21b6", outline: "none", fontFamily: "inherit" }}
+                />
+              ) : (
+                <span
+                  onClick={() => { setTotalDraft(quote.total && quote.total > 0 ? String(quote.total) : ""); setEditingTotal(true); }}
+                  title="לחץ לעריכה"
+                  style={{ fontSize: "20px", fontWeight: 800, color: quote.total > 0 ? "#5b21b6" : "#a78bfa", cursor: "pointer" }}
+                >
+                  {quote.total > 0 ? formatILS(quote.total) : "מחיר יעודכן ✏️"}
+                </span>
+              )}
             </div>
             {quote.has_tax !== undefined && (
               <div style={{ fontSize: "11px", color: "#8b5cf6", marginTop: 6, textAlign: "left" }}>
