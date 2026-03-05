@@ -37,6 +37,7 @@ interface ChatMessage {
 interface ChatPageProps {
   aiContext?: AIContext & { user_id?: string };
   isGuest?: boolean;
+  token?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ function formatILS(n: number): string {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
+export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
   const [input, setInput]         = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -115,7 +116,7 @@ export default function ChatPage({ aiContext, isGuest }: ChatPageProps) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: historyForApi, aiContext: effectiveContext, currentQuote }),
+        body: JSON.stringify({ messages: historyForApi, aiContext: effectiveContext, currentQuote, token }),
       });
 
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { buildSystemPrompt } from "@/lib/systemPrompt";
+import { verifyToken } from "@/lib/verifyToken";
 import type { AIContext } from "@/lib/verifyToken";
 import type { Quote, PartialQuote } from "@/lib/quoteSchema";
 
@@ -86,9 +87,22 @@ export async function POST(req: NextRequest) {
       messages: ChatMessage[];
       aiContext: AIContext & { quote_id?: string };
       currentQuote?: Partial<Quote>;
+      token?: string;
     };
 
-    const { messages, aiContext, currentQuote } = body;
+    const { messages, aiContext: clientContext, currentQuote, token } = body;
+
+    let aiContext: AIContext = clientContext;
+    if (token) {
+      const result = verifyToken(token);
+      if (!result.valid) {
+        return new Response(JSON.stringify({ error: "Invalid token" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      aiContext = result.payload;
+    }
 
     if (!messages || !aiContext) {
       return new Response(JSON.stringify({ error: "Missing messages or aiContext" }), {

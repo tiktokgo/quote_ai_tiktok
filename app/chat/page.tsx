@@ -16,5 +16,5 @@ export default async function ChatRoute({ searchParams }: PageProps) {
     return <ChatPage isGuest={true} />;
   }
 
-  return <ChatPage aiContext={{ ...result.payload, user_id: userId }} />;
+  return <ChatPage aiContext={{ ...result.payload, user_id: userId }} token={token} />;
 }
