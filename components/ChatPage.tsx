@@ -323,9 +323,11 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         });
       }
       const data = await res.json() as { ok: boolean; quote_id?: string; redirect_url?: string };
+      console.log("[handleApprove] API response:", JSON.stringify(data));
       if (data.ok) {
         const id = data.quote_id;
-        const guestRedirectUrl = data.redirect_url;
+        const guestRedirectUrl = data.redirect_url ?? (process.env.NEXT_PUBLIC_GUEST_REDIRECT_URL || undefined);
+        console.log("[handleApprove] isGuest:", isGuest, "guestRedirectUrl:", guestRedirectUrl);
         setQuoteId(id);
         setReviewStars(0);
         setReviewComment("");
@@ -335,6 +337,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         redirectTimerRef.current = setTimeout(() => {
           redirectTimerRef.current = null;
           const inIframe = window.parent !== window;
+          console.log("[redirect timer] fired — isGuest:", isGuest, "guestRedirectUrl:", guestRedirectUrl, "inIframe:", inIframe);
           if (isGuest) {
             // New user: redirect only to the URL returned by the onboarding API
             if (guestRedirectUrl) {
