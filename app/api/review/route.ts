@@ -8,7 +8,7 @@ export async function POST(req: Request) {
     comment?: string;
   };
 
-  const url = process.env.BUBBLE_REVIEW_URL;
+  const url = process.env.REVIEW_WEBHOOK_URL;
   if (url) {
     await fetch(url, {
       method: "POST",

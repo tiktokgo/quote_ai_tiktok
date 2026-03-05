@@ -279,8 +279,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
   const [approveState, setApproveState] = useState<"idle" | "loading" | "success" | "error">("idle");
-  const [countdown, setCountdown] = useState(6);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [quoteId, setQuoteId] = useState<string | undefined>();
   const [reviewStars, setReviewStars] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
@@ -296,7 +295,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     }).catch(() => {});
   }, [reviewStars, reviewComment, quoteId, aiContext?.user_id]);
 
-  useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
+  useEffect(() => () => { if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current); }, []);
 
   const handleApprove = useCallback(async () => {
     setApproveState("loading");
@@ -328,25 +327,18 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         setReviewComment("");
         setReviewSubmitted(false);
         setApproveState("success");
-        setCountdown(6);
-        let secs = 6;
-        if (countdownRef.current) clearInterval(countdownRef.current);
-        countdownRef.current = setInterval(() => {
-          secs -= 1;
-          setCountdown(secs);
-          if (secs <= 0) {
-            clearInterval(countdownRef.current!);
-            countdownRef.current = null;
-            const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
-            if (base && id) {
-              const url = base + id;
-              window.parent.postMessage({ type: "quote_redirect", url }, "*");
-              window.location.href = url; // fallback for non-iframe use
-            } else {
-              setApproveState("idle"); // no redirect configured — close overlay
-            }
+        if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+        redirectTimerRef.current = setTimeout(() => {
+          redirectTimerRef.current = null;
+          const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
+          if (base && id) {
+            const url = base + id;
+            window.parent.postMessage({ type: "quote_redirect", url }, "*");
+            window.location.href = url; // fallback for non-iframe use
+          } else {
+            setApproveState("idle"); // no redirect configured — close overlay
           }
-        }, 1000);
+        }, 11000);
       } else {
         setApproveState("error");
         setTimeout(() => setApproveState("idle"), 3000);
@@ -682,8 +674,16 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           }}>
             <div style={{ fontSize: 40, marginBottom: 10 }}>✨</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: "#c4b5fd", marginBottom: 6 }}>ההצעה נשמרה!</div>
-            <div style={{ fontSize: 14, color: "rgba(196,181,253,0.6)", marginBottom: 24 }}>
-              מעביר בעוד {countdown} שניות
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}>
+              <style>{`
+                @keyframes spin-ring { to { transform: rotate(360deg); } }
+              `}</style>
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                border: "3px solid rgba(139,92,246,0.25)",
+                borderTopColor: "#a78bfa",
+                animation: "spin-ring 0.9s linear infinite",
+              }} />
             </div>
 
             {/* Review section */}
