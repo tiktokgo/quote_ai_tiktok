@@ -958,9 +958,9 @@ function QuotePanel({
               <span style={{ fontSize: "13px", color: "#7c3aed", fontWeight: 600 }}>סה&quot;כ לתשלום</span>
               <span style={{ fontSize: "20px", fontWeight: 800, color: "#5b21b6" }}>{formatILS(quote.total)}</span>
             </div>
-            {quote.has_tax && quote.tax_amount !== undefined && (
+            {quote.has_tax !== undefined && (
               <div style={{ fontSize: "11px", color: "#8b5cf6", marginTop: 6, textAlign: "left" }}>
-                כולל מע&quot;מ 18% — {formatILS(quote.tax_amount)}
+                {quote.has_tax ? 'כולל מע״מ' : 'ללא מע״מ'}
               </div>
             )}
           </div>
