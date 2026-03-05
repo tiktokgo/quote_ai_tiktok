@@ -181,6 +181,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     if (!text || isLoading) return;
     setInput("");
     sendMessage(text, quote);
+    setTimeout(() => textareaRef.current?.focus(), 0);
   }, [input, isLoading, quote, sendMessage]);
 
   // ── PDF: Improve quote ────────────────────────────────────────────────────
@@ -280,6 +281,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
   const [approveState, setApproveState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [quoteId, setQuoteId] = useState<string | undefined>();
   const [reviewStars, setReviewStars] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
@@ -492,7 +494,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   style={{
                     width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
                     background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
-                    color: "#e2e8f0", fontSize: "14px", outline: "none", direction: "rtl",
+                    color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "rtl",
                     fontFamily: "inherit",
                   }}
                   onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
@@ -749,6 +751,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
             {/* Textarea */}
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -761,7 +764,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 border: "none",
                 outline: "none",
                 color: "#e2e8f0",
-                fontSize: "14px",
+                fontSize: "16px",
                 lineHeight: 1.5,
                 resize: "none",
                 maxHeight: 120,
