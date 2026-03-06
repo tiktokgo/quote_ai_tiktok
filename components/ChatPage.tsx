@@ -57,6 +57,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "", address: "", logo_url: "", website: "" });
   const [scanState, setScanState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [scanError, setScanError] = useState("");
+  const [scanResult, setScanResult] = useState<{ logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string } | null>(null);
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
@@ -398,6 +399,14 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         setScanError(data.message ?? "לא הצלחנו לסרוק את האתר");
         return;
       }
+      console.log("[scan-website] result:", JSON.stringify(data));
+      const gotSomething = data.company_name || data.industry || data.email || data.logo_url;
+      if (!gotSomething) {
+        setScanState("error");
+        setScanError("לא הצלחנו לחלץ פרטים — מלא ידנית");
+        return;
+      }
+      setScanResult({ logo_url: data.logo_url, company_name: data.company_name, industry: data.industry, email: data.email, address: data.address });
       setGuestDraft((p) => ({
         ...p,
         company_name: data.company_name || p.company_name,
@@ -537,22 +546,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
                 יש לך אתר? נסרוק אותו אוטומטית
               </label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  type="url"
-                  value={guestDraft.website}
-                  onChange={(e) => { setGuestDraft((p) => ({ ...p, website: e.target.value })); setScanState("idle"); setScanError(""); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleScanWebsite(); } }}
-                  placeholder="yourwebsite.com"
-                  style={{
-                    flex: 1, padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
-                    background: "rgba(255,255,255,0.06)", border: `1px solid ${scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)"}`,
-                    color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "ltr",
-                    fontFamily: "inherit",
-                  }}
-                  onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)")}
-                />
+              <div style={{ display: "flex", gap: 8, flexDirection: "row-reverse" }}>
                 <button
                   onClick={handleScanWebsite}
                   onMouseDown={(e) => e.preventDefault()}
@@ -565,14 +559,47 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {scanState === "loading" ? "סורק..." : scanState === "done" ? "✓ נסרק" : "סרוק →"}
+                  {scanState === "loading" ? "סורק..." : scanState === "done" ? "✓ נסרק" : "סרוק"}
                 </button>
+                <input
+                  type="url"
+                  value={guestDraft.website}
+                  onChange={(e) => { setGuestDraft((p) => ({ ...p, website: e.target.value })); setScanState("idle"); setScanError(""); setScanResult(null); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleScanWebsite(); } }}
+                  placeholder="yourwebsite.com"
+                  style={{
+                    flex: 1, padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
+                    background: "rgba(255,255,255,0.06)", border: `1px solid ${scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)"}`,
+                    color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "ltr",
+                    fontFamily: "inherit",
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)")}
+                />
               </div>
               {scanState === "error" && scanError && (
                 <div style={{ fontSize: 11, color: "#f87171", marginTop: 5 }}>{scanError}</div>
               )}
-              {scanState === "done" && (
-                <div style={{ fontSize: 11, color: "#34d399", marginTop: 5 }}>הפרטים מולאו אוטומטית — ניתן לערוך</div>
+              {scanState === "done" && scanResult && (
+                <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", gap: 10 }}>
+                  {scanResult.logo_url && (
+                    <img
+                      src={scanResult.logo_url}
+                      alt="לוגו"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      style={{ width: 36, height: 36, borderRadius: 6, objectFit: "contain", background: "#fff", flexShrink: 0, border: "1px solid rgba(255,255,255,0.15)" }}
+                    />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {scanResult.company_name && <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginBottom: 2 }}>{scanResult.company_name}</div>}
+                    <div style={{ fontSize: 11, color: "rgba(196,181,253,0.7)", display: "flex", flexWrap: "wrap", gap: "2px 8px" }}>
+                      {scanResult.industry && <span>🏢 {scanResult.industry}</span>}
+                      {scanResult.email    && <span>✉ {scanResult.email}</span>}
+                      {scanResult.address  && <span>📍 {scanResult.address}</span>}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#34d399", flexShrink: 0 }}>✓ מולא</div>
+                </div>
               )}
             </div>
 
