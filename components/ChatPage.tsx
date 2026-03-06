@@ -53,14 +53,19 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [quote, setQuote]         = useState<Partial<Quote>>({});
 
   // ── Guest state ───────────────────────────────────────────────────────────
-  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string } | null>(null);
-  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "" });
+  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string; address?: string; logo_url?: string } | null>(null);
+  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "", address: "", logo_url: "", website: "" });
+  const [scanState, setScanState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [scanError, setScanError] = useState("");
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
       company_name: guestInfo.company_name,
       industry:     guestInfo.industry,
-      company_info: `אימייל: ${guestInfo.email}`,
+      company_info: [
+        guestInfo.email   && `אימייל: ${guestInfo.email}`,
+        guestInfo.address && `כתובת: ${guestInfo.address}`,
+      ].filter(Boolean).join("\n"),
     } : undefined);
 
   // ── Mobile state ──────────────────────────────────────────────────────────
@@ -312,6 +317,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             company_name: guestInfo.company_name,
             email:        guestInfo.email,
             industry:     guestInfo.industry,
+            address:      guestInfo.address,
+            logo_url:     guestInfo.logo_url,
             quote:        quoteWithTax,
           }),
         });
@@ -373,6 +380,38 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     }
   }, [aiContext, isGuest, guestInfo, quote]);
 
+  // ── Website scanner ────────────────────────────────────────────────────────
+  const handleScanWebsite = useCallback(async () => {
+    const site = guestDraft.website.trim();
+    if (!site) return;
+    setScanState("loading");
+    setScanError("");
+    try {
+      const res = await fetch("/api/scan-website", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: site }),
+      });
+      const data = await res.json() as { ok: boolean; message?: string; logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string };
+      if (!data.ok) {
+        setScanState("error");
+        setScanError(data.message ?? "לא הצלחנו לסרוק את האתר");
+        return;
+      }
+      setGuestDraft((p) => ({
+        ...p,
+        company_name: data.company_name || p.company_name,
+        industry:     data.industry     || p.industry,
+        email:        data.email        || p.email,
+        address:      data.address      || p.address,
+        logo_url:     data.logo_url     || p.logo_url,
+      }));
+      setScanState("done");
+    } catch {
+      setScanState("error");
+      setScanError("שגיאת רשת — נסה שוב");
+    }
+  }, [guestDraft.website]);
 
 
   // ── Guest form (no token) ──────────────────────────────────────────────────
@@ -479,10 +518,65 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             boxShadow: "0 8px 48px rgba(0,0,0,0.55)",
             marginBottom: 10,
           }}>
-            <div style={{ textAlign: "center", marginBottom: 22 }}>
+            {/* Header: logo + title */}
+            <div style={{ textAlign: "center", marginBottom: 18 }}>
+              {guestDraft.logo_url && (
+                <img
+                  src={guestDraft.logo_url}
+                  alt="לוגו"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  style={{ width: 52, height: 52, borderRadius: "50%", objectFit: "contain", border: "2px solid rgba(139,92,246,0.4)", background: "#fff", marginBottom: 8 }}
+                />
+              )}
               <div style={{ fontSize: "22px", fontWeight: 800, color: "#c4b5fd", letterSpacing: "-0.3px" }}>יוצרים הצעת מחיר בקלות</div>
               <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.55)", marginTop: 5 }}>3 שאלות קצרות ומתחילים</div>
             </div>
+
+            {/* Website scanner */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
+                יש לך אתר? נסרוק אותו אוטומטית
+              </label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="url"
+                  value={guestDraft.website}
+                  onChange={(e) => { setGuestDraft((p) => ({ ...p, website: e.target.value })); setScanState("idle"); setScanError(""); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleScanWebsite(); } }}
+                  placeholder="yourwebsite.com"
+                  style={{
+                    flex: 1, padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
+                    background: "rgba(255,255,255,0.06)", border: `1px solid ${scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)"}`,
+                    color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "ltr",
+                    fontFamily: "inherit",
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)")}
+                />
+                <button
+                  onClick={handleScanWebsite}
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={!guestDraft.website.trim() || scanState === "loading"}
+                  style={{
+                    flexShrink: 0, padding: "10px 14px", borderRadius: 8, border: "none",
+                    background: scanState === "done" ? "rgba(52,211,153,0.2)" : guestDraft.website.trim() ? "linear-gradient(135deg,#7c3aed,#a855f7)" : "rgba(139,92,246,0.2)",
+                    color: scanState === "done" ? "#34d399" : "#fff",
+                    fontSize: "13px", fontWeight: 700, cursor: guestDraft.website.trim() && scanState !== "loading" ? "pointer" : "default",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {scanState === "loading" ? "סורק..." : scanState === "done" ? "✓ נסרק" : "סרוק →"}
+                </button>
+              </div>
+              {scanState === "error" && scanError && (
+                <div style={{ fontSize: 11, color: "#f87171", marginTop: 5 }}>{scanError}</div>
+              )}
+              {scanState === "done" && (
+                <div style={{ fontSize: 11, color: "#34d399", marginTop: 5 }}>הפרטים מולאו אוטומטית — ניתן לערוך</div>
+              )}
+            </div>
+
+            {/* Manual fields */}
             {(["company_name", "email", "industry"] as const).map((field) => (
               <div key={field} style={{ marginBottom: 14 }}>
                 <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
@@ -492,7 +586,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   type={field === "email" ? "email" : "text"}
                   value={guestDraft[field]}
                   onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) setGuestInfo({ ...guestDraft }); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined }); }}
                   placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: אינסטלציה"}
                   style={{
                     width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
@@ -506,7 +600,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               </div>
             ))}
             <button
-              onClick={() => { if (canSubmit) setGuestInfo({ ...guestDraft }); }}
+              onClick={() => { if (canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined }); }}
               disabled={!canSubmit}
               style={{
                 marginTop: 10, width: "100%", padding: "13px 0", borderRadius: 50, border: "none",
