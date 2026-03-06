@@ -63,6 +63,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     aiContext ?? (guestInfo ? {
       company_name: guestInfo.company_name,
       industry:     guestInfo.industry,
+      company_logo: guestInfo.logo_url || undefined,
       company_info: [
         guestInfo.email   && `אימייל: ${guestInfo.email}`,
         guestInfo.address && `כתובת: ${guestInfo.address}`,

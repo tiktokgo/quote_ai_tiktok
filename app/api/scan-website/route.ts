@@ -3,6 +3,12 @@ import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const FETCH_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml",
+  "Accept-Language": "he-IL,he;q=0.9,en;q=0.8",
+};
+
 function extractMeta(html: string, property: string): string {
   const m =
     html.match(new RegExp(`<meta[^>]+property=["']${property}["'][^>]+content=["']([^"']+)["']`, "i")) ||
@@ -44,6 +50,23 @@ function resolveUrl(base: string, path: string): string {
   try { return new URL(path, base).href; } catch { return ""; }
 }
 
+function findEmail(html: string): string {
+  // Prefer mailto: links — more deliberate than inline text mentions
+  const mailto = html.match(/mailto:([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})/i);
+  if (mailto) return mailto[1];
+  // Fall back to plain email pattern, skip generic/system addresses
+  const plain = html.match(/\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b/);
+  if (plain && !/noreply|no-reply|privacy|sentry|@example/i.test(plain[1])) return plain[1];
+  return "";
+}
+
+async function fetchHtml(url: string, timeout = 3000): Promise<string> {
+  return fetch(url, { headers: FETCH_HEADERS, redirect: "follow", signal: AbortSignal.timeout(timeout) })
+    .then((r) => r.text())
+    .then((t) => t.slice(0, 20000))
+    .catch(() => "");
+}
+
 export async function POST(req: NextRequest) {
   let url: string;
   try {
@@ -62,22 +85,17 @@ export async function POST(req: NextRequest) {
   // Always-available logo via Google Favicon
   const google_favicon = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128` : "";
 
-  // ── Fetch HTML and run AI extraction IN PARALLEL ───────────────────────────
-  const htmlPromise = fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml",
-      "Accept-Language": "he-IL,he;q=0.9,en;q=0.8",
-    },
-    redirect: "follow",
-    signal: AbortSignal.timeout(3000), // short timeout — only need meta tags from <head>
-  })
-    .then((r) => r.text())
-    .then((t) => t.slice(0, 15000)) // only need the <head> section
-    .catch((e) => { console.warn("[scan-website] HTML fetch:", e instanceof Error ? e.message : e); return ""; });
+  // ── Fetch homepage + contact page IN PARALLEL (both capped at 3s) ──────────
+  const origin = url.replace(/\/$/, "");
+  const [html, contactHtml] = await Promise.all([
+    fetchHtml(url, 3000),
+    // Try /contact first, fall back to Hebrew and /contact-us
+    fetchHtml(`${origin}/contact`, 3000)
+      .then((h) => h || fetchHtml(`${origin}/contact-us`, 2000))
+      .catch(() => ""),
+  ]);
 
-  // Run AI with just the domain immediately (fast path), then enhance with HTML
-  const html = await htmlPromise;
+  const combinedHtml = html + "\n" + contactHtml;
 
   const ogImage    = extractMeta(html, "og:image");
   const ogSiteName = extractMeta(html, "og:site_name");
@@ -91,15 +109,16 @@ export async function POST(req: NextRequest) {
 
   // Build hints — everything we have
   const hints: Record<string, string> = { domain };
-  if (ogSiteName)       hints.og_site_name = ogSiteName;
-  if (title)            hints.page_title   = title;
-  if (jsonLd.name)      hints.ld_name      = String(jsonLd.name);
-  if (jsonLd.email)     hints.ld_email     = String(jsonLd.email);
+  if (ogSiteName)  hints.og_site_name = ogSiteName;
+  if (title)       hints.page_title   = title;
+  if (jsonLd.name) hints.ld_name      = String(jsonLd.name);
+  if (jsonLd.email) hints.ld_email    = String(jsonLd.email);
   const addr = jsonLd.address as Record<string, string> | undefined;
   if (addr) hints.ld_address = [addr.streetAddress, addr.addressLocality, addr.addressRegion].filter(Boolean).join(", ");
 
-  const emailMatch = html.match(/\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/);
-  if (emailMatch) hints.found_email = emailMatch[0];
+  // Search for email across homepage + contact page
+  const foundEmail = findEmail(combinedHtml);
+  if (foundEmail) hints.found_email = foundEmail;
 
   console.log(`[scan-website] domain:${domain} hints:${JSON.stringify(hints)}`);
 
@@ -143,6 +162,7 @@ Return a JSON object with exactly these keys:
     console.warn("[scan-website] AI failed:", e instanceof Error ? e.message : e);
     // Fallback: derive company name from domain
     company_name = domain.split(".")[0].replace(/[-_]/g, " ");
+    if (hints.found_email) email = hints.found_email;
   }
 
   console.log(`[scan-website] → name:"${company_name}" industry:"${industry}" email:"${email}" logo:"${logo_url}"`);
