@@ -786,6 +786,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             {/* Send — RIGHT in JSX = LEFT in RTL */}
             <button
               onClick={handleSend}
+              onMouseDown={(e) => e.preventDefault()}
               disabled={isLoading || !input.trim()}
               style={{
                 flexShrink: 0,
