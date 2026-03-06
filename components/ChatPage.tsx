@@ -1464,10 +1464,17 @@ function QuotePanel({
 
       {/* ── Floating approve button ── */}
       {(() => {
-        const canApprove = (quote.items?.length ?? 0) > 0 && (quote.total ?? 0) > 0;
+        const hasItems      = (quote.items?.length ?? 0) > 0;
+        const hasTotal      = (quote.total ?? 0) > 0;
+        const hasTitle      = !!quote.title?.trim();
+        const hasClientName = !!quote.client?.name?.trim();
+        const canApprove    = hasItems && hasTotal && hasTitle && hasClientName;
         const isBusy = approveState === "loading" || approveState === "success";
         const helperText = !canApprove
-          ? ((quote.items?.length ?? 0) === 0 ? "ממתין לפריטי עבודה..." : "עדכן מחיר כדי להמשיך")
+          ? (!hasItems      ? "ממתין לפריטי עבודה..."
+           : !hasTotal      ? "עדכן מחיר כדי להמשיך"
+           : !hasClientName ? "חסר שם לקוח"
+           : "חסרה כותרת להצעה")
           : "נעביר אותך לעמוד תצוגה ושיתוף ההצעה";
         return (
           <div style={{
