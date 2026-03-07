@@ -348,13 +348,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           const inIframe = window.parent !== window;
           console.log("[redirect timer] fired — isGuest:", isGuest, "guestRedirectUrl:", guestRedirectUrl, "inIframe:", inIframe);
           if (isGuest) {
-            // New user: redirect only to the URL returned by the onboarding API
+            // New user: always redirect directly (not in iframe)
             if (guestRedirectUrl) {
-              if (inIframe) {
-                window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
-              } else {
-                window.location.href = guestRedirectUrl;
-              }
+              window.location.href = guestRedirectUrl;
             }
             // If no redirect_url returned, stay on page (do nothing)
           } else {
