@@ -372,222 +372,27 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   }, [aiContext, isGuest, guestInfo, quote]);
 
 
+  // ── Guest registration helpers ─────────────────────────────────────────────
+  const canSubmit = !!(guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim());
 
-  // ── Guest form (no token) ──────────────────────────────────────────────────
-  if (isGuest && !guestInfo) {
-    const canSubmit = guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim();
-    const guestInfoPayload = { company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry };
-    const handleGuestSubmit = async () => {
-      if (!canSubmit || submitChecking) return;
-      setSubmitChecking(true);
-      try {
-        const res = await fetch("/api/check-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: guestDraft.email }),
-        });
-        const data = await res.json() as { exists: boolean };
-        if (data.exists) {
-          window.location.href = "https://app.tik-tok.co.il";
-          return;
-        }
-      } catch { /* on error, proceed as new user */ }
-      setSubmitChecking(false);
-      setGuestInfo(guestInfoPayload);
-    };
-    return (
-      <div dir="rtl" style={{
-        position: "relative",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        height: "100dvh",
-        overflow: "hidden",
-        background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
-      }}>
-        {/* ── Blurred app preview background ── */}
-        <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", flexDirection: "row",
-          filter: "blur(8px)",
-          transform: "scale(1.06)",
-          pointerEvents: "none",
-          userSelect: "none",
-          direction: "ltr",
-        }}>
-          {/* Left: Quote panel mock */}
-          <div style={{ width: "44%", background: "#fff", display: "flex", flexDirection: "column", padding: "20px 16px", gap: 10, overflow: "hidden" }}>
-            <div style={{ display: "flex", gap: 10, padding: "10px 12px", background: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb" }}>
-              <div style={{ width: 40, height: 40, borderRadius: 6, background: "#ede9fe", flexShrink: 0 }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ height: 11, width: "55%", background: "#d1d5db", borderRadius: 3, marginBottom: 6 }} />
-                <div style={{ height: 8, width: "35%", background: "#e5e7eb", borderRadius: 3 }} />
-              </div>
-            </div>
-            <div style={{ textAlign: "center", paddingBottom: 10, borderBottom: "2px solid #7c3aed" }}>
-              <div style={{ height: 13, width: "40%", background: "#1e1b4b", borderRadius: 3, margin: "0 auto" }} />
-            </div>
-            <div style={{ height: 11, width: "75%", background: "#374151", borderRadius: 3 }} />
-            <div style={{ padding: "9px 11px", background: "#f9fafb", borderRadius: 7, border: "1px solid #e5e7eb" }}>
-              <div style={{ height: 7, width: "28%", background: "#9ca3af", borderRadius: 3, marginBottom: 7 }} />
-              <div style={{ height: 11, width: "58%", background: "#374151", borderRadius: 3, marginBottom: 5 }} />
-              <div style={{ height: 9, width: "42%", background: "#9ca3af", borderRadius: 3 }} />
-            </div>
-            <div style={{ height: 7, width: "22%", background: "#9ca3af", borderRadius: 3 }} />
-            {[53, 68, 45, 72, 60].map((w, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, paddingBottom: 9, borderBottom: "1px solid #f3f4f6", alignItems: "flex-start" }}>
-                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ height: 10, width: `${w}%`, background: "#374151", borderRadius: 3, marginBottom: 4 }} />
-                  <div style={{ height: 8, width: `${w + 12}%`, background: "#9ca3af", borderRadius: 3 }} />
-                </div>
-              </div>
-            ))}
-            <div style={{ padding: "11px 13px", background: "#f5f3ff", borderRadius: 7, border: "1px solid #ddd6fe", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ height: 11, width: "28%", background: "#7c3aed", borderRadius: 3 }} />
-              <div style={{ height: 15, width: "22%", background: "#5b21b6", borderRadius: 3 }} />
-            </div>
-          </div>
-          {/* Right: Chat panel mock */}
-          <div style={{ flex: 1, background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)", display: "flex", flexDirection: "column", padding: "14px 12px", gap: 9, overflow: "hidden" }}>
-            <div style={{ paddingBottom: 10, borderBottom: "1px solid rgba(139,92,246,0.2)", marginBottom: 4 }}>
-              <div style={{ height: 11, width: "42%", background: "#c4b5fd", borderRadius: 3, marginBottom: 5 }} />
-              <div style={{ height: 8, width: "26%", background: "rgba(196,181,253,0.35)", borderRadius: 3 }} />
-            </div>
-            {[
-              { side: "end",   w: "72%" },
-              { side: "start", w: "52%" },
-              { side: "end",   w: "58%" },
-              { side: "start", w: "44%" },
-              { side: "end",   w: "65%" },
-              { side: "start", w: "38%" },
-            ].map((m, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: m.side === "start" ? "flex-start" : "flex-end" }}>
-                <div style={{
-                  padding: "9px 13px", borderRadius: 12,
-                  background: m.side === "start" ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.08)",
-                  width: m.w,
-                }}>
-                  <div style={{ height: 9, background: "rgba(255,255,255,0.28)", borderRadius: 3, marginBottom: 4 }} />
-                  <div style={{ height: 9, width: "65%", background: "rgba(255,255,255,0.18)", borderRadius: 3 }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Dark overlay */}
-        <div style={{ position: "absolute", inset: 0, background: "rgba(7,7,26,0.72)", pointerEvents: "none" }} />
-
-        {/* ── Main content column ── */}
-        <div style={{
-          position: "relative", zIndex: 10,
-          width: "100%", maxWidth: 440,
-          margin: "0 16px",
-          display: "flex", flexDirection: "column", alignItems: "stretch",
-          maxHeight: "100dvh", overflowY: "auto",
-          padding: "24px 0",
-          boxSizing: "border-box",
-        }}>
-
-          {/* ── Form box ── */}
-          <div style={{
-            background: "rgba(15,12,40,0.9)", border: "1px solid rgba(139,92,246,0.38)",
-            borderRadius: 16, padding: "26px 24px",
-            backdropFilter: "blur(20px)",
-            boxShadow: "0 8px 48px rgba(0,0,0,0.55)",
-            marginBottom: 10,
-          }}>
-            {/* Header: title */}
-            <div style={{ textAlign: "center", marginBottom: 18 }}>
-              <div style={{ fontSize: "22px", fontWeight: 800, color: "#c4b5fd", letterSpacing: "-0.3px" }}>יוצרים הצעת מחיר בקלות</div>
-              <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.55)", marginTop: 5 }}>3 שאלות קצרות ומתחילים</div>
-            </div>
-
-            {/* Fields */}
-            {(["company_name", "email", "industry"] as const).map((field) => (
-              <div key={field} style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
-                  {field === "company_name" ? "שם חברה" : field === "email" ? "אימייל" : "תחום עיסוק"}
-                </label>
-                <input
-                  type={field === "email" ? "email" : "text"}
-                  value={guestDraft[field]}
-                  onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleGuestSubmit(); }}
-                  placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: אינסטלציה"}
-                  style={{
-                    width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
-                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
-                    color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "rtl",
-                    fontFamily: "inherit",
-                  }}
-                  onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)")}
-                />
-              </div>
-            ))}
-            <button
-              onClick={handleGuestSubmit}
-              disabled={!canSubmit || submitChecking}
-              style={{
-                marginTop: 10, width: "100%", padding: "13px 0", borderRadius: 50, border: "none",
-                background: canSubmit && !submitChecking
-                  ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)"
-                  : "rgba(139,92,246,0.2)",
-                color: "#fff", fontSize: "15px", fontWeight: 700, cursor: canSubmit && !submitChecking ? "pointer" : "default",
-                boxShadow: canSubmit && !submitChecking ? "0 4px 24px rgba(139,92,246,0.45)" : "none",
-                transition: "background 0.2s, box-shadow 0.2s",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                opacity: submitChecking ? 0.7 : 1,
-              }}
-            >
-              <span>🏆</span>
-              <span>{submitChecking ? "בודק..." : "צרו הצעה מנצחת"}</span>
-            </button>
-          </div>
-
-          {/* ── Chat preview card ── */}
-          <div style={{
-            background: "rgba(5,3,18,0.6)",
-            border: "1px solid rgba(99,60,220,0.22)",
-            borderRadius: 14,
-            padding: "12px 14px",
-            backdropFilter: "blur(12px)",
-            boxShadow: "0 2px 16px rgba(0,0,0,0.3)",
-          }}>
-            {/* Chat header */}
-            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid rgba(99,60,220,0.15)" }}>
-              <div style={{ width: 24, height: 24, borderRadius: "50%", background: "linear-gradient(135deg,#6d28d9,#db2777)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🤖</div>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa" }}>עוזר הצעות מחיר AI</div>
-                <div style={{ fontSize: 9, color: "rgba(167,139,250,0.45)" }}>מחובר ● זמין 24/7</div>
-              </div>
-            </div>
-            {/* Sample conversation */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-              <div style={{ display: "flex", gap: 7, alignItems: "flex-end" }}>
-                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "linear-gradient(135deg,#6d28d9,#9333ea)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🤖</div>
-                <div style={{ background: "rgba(109,40,217,0.18)", borderRadius: "3px 12px 12px 12px", padding: "7px 10px", maxWidth: "82%", fontSize: 12, color: "rgba(226,232,240,0.85)", lineHeight: 1.4, border: "1px solid rgba(109,40,217,0.18)" }}>
-                  שלום! ספר לי על הפרויקט ואני אכין הצעה מקצועית מיד ✨
-                </div>
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <div style={{ background: "rgba(255,255,255,0.06)", borderRadius: "12px 3px 12px 12px", padding: "7px 10px", maxWidth: "78%", fontSize: 12, color: "rgba(226,232,240,0.75)", lineHeight: 1.4, border: "1px solid rgba(255,255,255,0.06)" }}>
-                  צריך הצעה לשיפוץ מטבח ברחוב הרצל 5
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 7, alignItems: "flex-end" }}>
-                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "linear-gradient(135deg,#6d28d9,#9333ea)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🤖</div>
-                <div style={{ background: "rgba(109,40,217,0.18)", borderRadius: "3px 12px 12px 12px", padding: "7px 10px", maxWidth: "82%", fontSize: 12, color: "rgba(226,232,240,0.85)", lineHeight: 1.4, border: "1px solid rgba(109,40,217,0.18)" }}>
-                  הכנתי טיוטת הצעה — בדוק אותה 📋 מה שם הלקוח?
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    );
-  }
+  const handleGuestSubmit = useCallback(async () => {
+    if (!canSubmit || submitChecking) return;
+    setSubmitChecking(true);
+    try {
+      const res = await fetch("/api/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: guestDraft.email }),
+      });
+      const data = await res.json() as { exists: boolean };
+      if (data.exists) {
+        window.location.href = "https://app.tik-tok.co.il";
+        return;
+      }
+    } catch { /* on error, proceed as new user */ }
+    setSubmitChecking(false);
+    setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry });
+  }, [canSubmit, submitChecking, guestDraft]);
 
   return (
     // Outer: column flex — tab bar on top (mobile), panels row below
@@ -681,12 +486,68 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           backdropFilter: "blur(8px)",
           textAlign: "right",
         }}>
-          <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4b5fd" }}>{effectiveContext?.company_name}</div>
-          <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.6)", marginTop: 2 }}>{effectiveContext?.industry}</div>
+          <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4b5fd" }}>{effectiveContext?.company_name ?? (isGuest ? "עוזר הצעות מחיר AI" : "")}</div>
+          <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.6)", marginTop: 2 }}>{effectiveContext?.industry ?? (isGuest ? "מלא את הפרטים כדי להתחיל" : "")}</div>
         </div>
 
         {/* Messages */}
         <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+
+          {/* Guest registration card — shown only before info is submitted */}
+          {isGuest && !guestInfo && (
+            <div style={{
+              background: "rgba(15,12,40,0.85)",
+              border: "1px solid rgba(139,92,246,0.38)",
+              borderRadius: 16,
+              padding: "20px 18px",
+              marginBottom: 4,
+              backdropFilter: "blur(16px)",
+            }}>
+              <div style={{ textAlign: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: "17px", fontWeight: 800, color: "#c4b5fd" }}>יוצרים הצעת מחיר בקלות</div>
+                <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.5)", marginTop: 4 }}>3 שאלות קצרות ומתחילים</div>
+              </div>
+              {(["company_name", "email", "industry"] as const).map((field) => (
+                <div key={field} style={{ marginBottom: 10 }}>
+                  <label style={{ display: "block", fontSize: "11px", color: "#a78bfa", marginBottom: 4, fontWeight: 600 }}>
+                    {field === "company_name" ? "שם חברה" : field === "email" ? "אימייל" : "תחום עיסוק"}
+                  </label>
+                  <input
+                    type={field === "email" ? "email" : "text"}
+                    value={guestDraft[field]}
+                    onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleGuestSubmit(); }}
+                    placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: אינסטלציה"}
+                    style={{
+                      width: "100%", padding: "9px 11px", borderRadius: 8, boxSizing: "border-box",
+                      background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
+                      color: "#e2e8f0", fontSize: "15px", outline: "none", direction: "rtl",
+                      fontFamily: "inherit",
+                    }}
+                    onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
+                    onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)")}
+                  />
+                </div>
+              ))}
+              <button
+                onClick={handleGuestSubmit}
+                disabled={!canSubmit || submitChecking}
+                style={{
+                  marginTop: 8, width: "100%", padding: "11px 0", borderRadius: 50, border: "none",
+                  background: canSubmit && !submitChecking
+                    ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)"
+                    : "rgba(139,92,246,0.2)",
+                  color: "#fff", fontSize: "14px", fontWeight: 700,
+                  cursor: canSubmit && !submitChecking ? "pointer" : "default",
+                  opacity: submitChecking ? 0.7 : 1,
+                  transition: "background 0.2s",
+                }}
+              >
+                {submitChecking ? "בודק..." : "צרו הצעה מנצחת 🏆"}
+              </button>
+            </div>
+          )}
+
           {messages.map((msg, i) => (
             <div key={i} style={{
               display: "flex",
@@ -753,7 +614,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             {/* Mic — LEFT in JSX = RIGHT in RTL */}
             <button
               onClick={handleVoice}
-              disabled={isLoading}
+              disabled={isLoading || (!!isGuest && !guestInfo)}
               title={isListening ? "עצור הקלטה" : "הקלד בקול"}
               style={{
                 flexShrink: 0,
@@ -808,18 +669,18 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             <button
               onClick={handleSend}
               onMouseDown={(e) => e.preventDefault()}
-              disabled={isLoading || !input.trim()}
+              disabled={isLoading || !input.trim() || (!!isGuest && !guestInfo)}
               style={{
                 flexShrink: 0,
                 width: 34,
                 height: 34,
                 borderRadius: "50%",
                 border: "none",
-                background: input.trim() && !isLoading
+                background: input.trim() && !isLoading && !(isGuest && !guestInfo)
                   ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
                   : "rgba(139,92,246,0.2)",
                 color: "#fff",
-                cursor: input.trim() && !isLoading ? "pointer" : "default",
+                cursor: input.trim() && !isLoading && !(isGuest && !guestInfo) ? "pointer" : "default",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
