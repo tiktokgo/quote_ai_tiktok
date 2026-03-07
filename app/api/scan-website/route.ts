@@ -122,7 +122,7 @@ function extractBrandColors(html: string): [string, string] {
 async function fetchHtml(url: string, timeout = 3000): Promise<string> {
   return fetch(url, { headers: FETCH_HEADERS, redirect: "follow", signal: AbortSignal.timeout(timeout) })
     .then((r) => r.text())
-    .then((t) => t.slice(0, 20000))
+    .then((t) => t.length > 25000 ? t.slice(0, 15000) + "\n" + t.slice(-15000) : t)
     .catch(() => "");
 }
 
