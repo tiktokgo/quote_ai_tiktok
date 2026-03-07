@@ -29,13 +29,15 @@ export async function POST(req: NextRequest) {
     let data: Record<string, unknown> = {};
     try { data = JSON.parse(text); } catch { /* ignore */ }
 
-    // Support common response shapes: { exists }, { found }, { new }, { is_new }
+    // Support common response shapes: { exists }, { found }, { new }, { is_new }, { exist: "yes" }
     const exists =
       data.exists === true ||
       data.found  === true ||
       data.new    === false ||
       data.is_new === false ||
-      res.status  === 409; // HTTP 409 Conflict = already exists
+      data.exist  === "yes" ||   // string "yes"/"no" format
+      data.exist  === true ||    // boolean format on same key
+      res.status  === 409;       // HTTP 409 Conflict = already exists
 
     console.log(`[check-email] email:${email} status:${res.status} exists:${exists} response:${text.slice(0, 100)}`);
     return Response.json({ exists });

@@ -75,18 +75,26 @@ function findPhone(html: string): string {
   // 1. tel: links — most reliable
   const tel = html.match(/href=["']tel:([\d+\-\s()]{7,})/i);
   if (tel) return tel[1].trim();
-  // 2. Israeli phone patterns: 05X-XXXXXXX, 0X-XXXXXXX, +972-XX-XXXXXXX
-  const plain = html.match(/(?:\+972[-\s]?|0)(?:[23489]\d|5[0-9])[-\s]?\d{3}[-\s]?\d{4}/);
+  // 2. Israeli phone patterns:
+  //    Fixed line: 0X-XXXXXXX  (e.g. 03-9090299, 09-1234567)
+  //    Mobile:     05X-XXXXXXX (e.g. 052-1234567, 054-9876543)
+  //    Intl:       +972-X-XXXXXXX / +972-5X-XXXXXXX
+  const plain = html.match(/(?:\+972[-\s]?|0)(?:5[0-9][-\s]?\d{7}|[23489][-\s]?\d{7})/);
   if (plain) return plain[0].trim();
   return "";
+}
+
+function rgbToHex(r: string, g: string, b: string): string {
+  return "#" + [r, g, b].map((n) => parseInt(n).toString(16).padStart(2, "0")).join("");
 }
 
 // Extract brand colors from combined HTML (CSS vars, theme-color, inline styles)
 function extractBrandColors(html: string): [string, string] {
   const isHex = (v: string) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v);
+  const addColor = (hex: string) => { if (isHex(hex) && !found.includes(hex.toLowerCase())) found.push(hex.toLowerCase()); };
   const found: string[] = [];
 
-  // 1. CSS variables from <style> blocks
+  // 1. CSS variables from <style> blocks — supports hex, rgb(), and space-separated (Tailwind)
   const styleBlocks = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)]
     .map((m) => m[1])
     .join("\n");
@@ -94,12 +102,20 @@ function extractBrandColors(html: string): [string, string] {
     "--primary", "--brand", "--main-color", "--color-primary",
     "--accent", "--secondary", "--highlight", "--color-secondary",
     "--color-accent", "--primary-color", "--brand-color",
+    "--clr-primary", "--clr-accent", "--theme-primary", "--theme-color",
   ];
   for (const varName of cssVarNames) {
-    const m = styleBlocks.match(new RegExp(`${varName.replace("--", "--")}\\s*:\\s*(#[0-9a-fA-F]{3,8})`, "i"));
-    if (m && isHex(m[1]) && !found.includes(m[1].toLowerCase())) {
-      found.push(m[1].toLowerCase());
-      if (found.length === 2) break;
+    if (found.length >= 2) break;
+    // hex
+    const mHex = styleBlocks.match(new RegExp(`${varName}\\s*:\\s*(#[0-9a-fA-F]{3,8})`, "i"));
+    if (mHex) { addColor(mHex[1]); continue; }
+    // rgb(r, g, b)
+    const mRgb = styleBlocks.match(new RegExp(`${varName}\\s*:\\s*rgb\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)`, "i"));
+    if (mRgb) { addColor(rgbToHex(mRgb[1], mRgb[2], mRgb[3])); continue; }
+    // Tailwind: --color: 59 130 246
+    const mSpace = styleBlocks.match(new RegExp(`${varName}\\s*:\\s*(\\d{1,3})\\s+(\\d{1,3})\\s+(\\d{1,3})\\s*[;}]`, "i"));
+    if (mSpace && parseInt(mSpace[1]) <= 255 && parseInt(mSpace[2]) <= 255 && parseInt(mSpace[3]) <= 255) {
+      addColor(rgbToHex(mSpace[1], mSpace[2], mSpace[3]));
     }
   }
 
@@ -108,21 +124,34 @@ function extractBrandColors(html: string): [string, string] {
     const tm =
       html.match(/<meta[^>]+name=["']theme-color["'][^>]+content=["'](#[0-9a-fA-F]{3,8})["']/i) ||
       html.match(/<meta[^>]+content=["'](#[0-9a-fA-F]{3,8})["'][^>]+name=["']theme-color["']/i);
-    if (tm && isHex(tm[1]) && !found.includes(tm[1].toLowerCase())) {
-      found.push(tm[1].toLowerCase());
+    if (tm) addColor(tm[1]);
+  }
+
+  // 3. background-color / color on header, nav, footer, body inline styles or common class patterns
+  if (found.length < 2) {
+    // hex in inline styles on key elements
+    const inlineHex = [
+      ...html.matchAll(/<(?:header|nav|footer|body)[^>]+style=["'][^"']*(?:background(?:-color)?|color)\s*:\s*(#[0-9a-fA-F]{3,8})/gi),
+    ];
+    for (const m of inlineHex) {
+      addColor(m[1]);
+      if (found.length >= 2) break;
     }
   }
 
-  // 3. background-color / color on <header> or <nav> inline styles
-  if (found.length < 2) {
-    const inlineMatches = [
-      ...html.matchAll(/<(?:header|nav)[^>]+style=["'][^"']*(?:background(?:-color)?|color)\s*:\s*(#[0-9a-fA-F]{3,8})/gi),
-    ];
-    for (const m of inlineMatches) {
-      if (isHex(m[1]) && !found.includes(m[1].toLowerCase())) {
-        found.push(m[1].toLowerCase());
-        if (found.length === 2) break;
-      }
+  // 4. Any hex color that appears many times in <style> (dominant color heuristic)
+  if (found.length < 1) {
+    const allHex = [...styleBlocks.matchAll(/#([0-9a-fA-F]{6})\b/g)].map((m) => "#" + m[1].toLowerCase());
+    const freq: Record<string, number> = {};
+    for (const h of allHex) freq[h] = (freq[h] || 0) + 1;
+    const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+    // Skip near-white and near-black
+    for (const [hex] of sorted) {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+      if (brightness > 30 && brightness < 220) { addColor(hex); if (found.length >= 2) break; }
     }
   }
 
@@ -132,7 +161,8 @@ function extractBrandColors(html: string): [string, string] {
 async function fetchHtml(url: string, timeout = 3000): Promise<string> {
   return fetch(url, { headers: FETCH_HEADERS, redirect: "follow", signal: AbortSignal.timeout(timeout) })
     .then((r) => r.text())
-    .then((t) => t.length > 25000 ? t.slice(0, 15000) + "\n" + t.slice(-15000) : t)
+    // Keep head (styles, meta) + large tail (footer has email/phone/colors)
+    .then((t) => t.length > 50000 ? t.slice(0, 15000) + "\n" + t.slice(-35000) : t)
     .catch(() => "");
 }
 
