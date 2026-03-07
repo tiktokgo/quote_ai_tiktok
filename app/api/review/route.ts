@@ -9,12 +9,20 @@ export async function POST(req: Request) {
   };
 
   const url = process.env.REVIEW_WEBHOOK_URL;
+  console.log(`[review] quote_id:${quote_id} user_id:${user_id} stars:${stars} comment:${comment} url_set:${!!url}`);
   if (url) {
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ quote_id, user_id, stars, comment }),
-    }).catch(() => {});
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quote_id, user_id, stars, comment }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const text = await res.text().catch(() => "");
+      console.log(`[review] webhook HTTP ${res.status} response:${text.slice(0, 100)}`);
+    } catch (e) {
+      console.warn("[review] webhook error:", e instanceof Error ? e.message : e);
+    }
   }
 
   return NextResponse.json({ ok: true });
