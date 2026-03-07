@@ -53,22 +53,15 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [quote, setQuote]         = useState<Partial<Quote>>({});
 
   // ── Guest state ───────────────────────────────────────────────────────────
-  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string; address?: string; logo_url?: string; color1?: string; color2?: string; phone?: string } | null>(null);
-  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "", address: "", logo_url: "", website: "", color1: "#7c3aed", color2: "#a855f7", phone: "" });
-  const [scanState, setScanState] = useState<"idle" | "loading" | "done" | "error">("idle");
-  const [scanError, setScanError] = useState("");
-  const [scanResult, setScanResult] = useState<{ logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string; phone?: string } | null>(null);
+  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string } | null>(null);
+  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "" });
   const [submitChecking, setSubmitChecking] = useState(false);
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
       company_name: guestInfo.company_name,
       industry:     guestInfo.industry,
-      company_logo: guestInfo.logo_url || undefined,
-      company_info: [
-        guestInfo.email   && `אימייל: ${guestInfo.email}`,
-        guestInfo.address && `כתובת: ${guestInfo.address}`,
-      ].filter(Boolean).join("\n"),
+      company_info: guestInfo.email ? `אימייל: ${guestInfo.email}` : "",
     } : undefined);
 
   // ── Mobile state ──────────────────────────────────────────────────────────
@@ -320,11 +313,6 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             company_name: guestInfo.company_name,
             email:        guestInfo.email,
             industry:     guestInfo.industry,
-            address:      guestInfo.address,
-            logo_url:     guestInfo.logo_url,
-            color1:       guestInfo.color1,
-            color2:       guestInfo.color2,
-            company_phone: guestInfo.phone,
             quote:        quoteWithTax,
           }),
         });
@@ -383,55 +371,12 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     }
   }, [aiContext, isGuest, guestInfo, quote]);
 
-  // ── Website scanner ────────────────────────────────────────────────────────
-  const handleScanWebsite = useCallback(async () => {
-    const site = guestDraft.website.trim();
-    if (!site) return;
-    setScanState("loading");
-    setScanError("");
-    try {
-      const res = await fetch("/api/scan-website", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: site }),
-      });
-      const data = await res.json() as { ok: boolean; message?: string; logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string; phone?: string };
-      if (!data.ok) {
-        setScanState("error");
-        setScanError(data.message ?? "לא הצלחנו לסרוק את האתר");
-        return;
-      }
-      console.log("[scan-website] result:", JSON.stringify(data));
-      const gotSomething = data.company_name || data.industry || data.email || data.logo_url;
-      if (!gotSomething) {
-        setScanState("error");
-        setScanError("לא הצלחנו לחלץ פרטים — מלא ידנית");
-        return;
-      }
-      setScanResult({ logo_url: data.logo_url, company_name: data.company_name, industry: data.industry, email: data.email, address: data.address, color1: data.color1, color2: data.color2, phone: data.phone });
-      setGuestDraft((p) => ({
-        ...p,
-        company_name: data.company_name || p.company_name,
-        industry:     data.industry     || p.industry,
-        email:        data.email        || p.email,
-        address:      data.address      || p.address,
-        logo_url:     data.logo_url     || p.logo_url,
-        color1:       data.color1       || p.color1,
-        color2:       data.color2       || p.color2,
-        phone:        data.phone        || p.phone,
-      }));
-      setScanState("done");
-    } catch {
-      setScanState("error");
-      setScanError("שגיאת רשת — נסה שוב");
-    }
-  }, [guestDraft.website]);
 
 
   // ── Guest form (no token) ──────────────────────────────────────────────────
   if (isGuest && !guestInfo) {
     const canSubmit = guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim();
-    const guestInfoPayload = { company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined, color1: guestDraft.color1 || undefined, color2: guestDraft.color2 || undefined, phone: guestDraft.phone || undefined };
+    const guestInfoPayload = { company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry };
     const handleGuestSubmit = async () => {
       if (!canSubmit || submitChecking) return;
       setSubmitChecking(true);
@@ -551,99 +496,13 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             boxShadow: "0 8px 48px rgba(0,0,0,0.55)",
             marginBottom: 10,
           }}>
-            {/* Header: logo + title */}
+            {/* Header: title */}
             <div style={{ textAlign: "center", marginBottom: 18 }}>
-              {guestDraft.logo_url && (
-                <img
-                  src={guestDraft.logo_url}
-                  alt="לוגו"
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                  style={{ width: 52, height: 52, borderRadius: "50%", objectFit: "contain", border: "2px solid rgba(139,92,246,0.4)", background: "#fff", marginBottom: 8 }}
-                />
-              )}
               <div style={{ fontSize: "22px", fontWeight: 800, color: "#c4b5fd", letterSpacing: "-0.3px" }}>יוצרים הצעת מחיר בקלות</div>
               <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.55)", marginTop: 5 }}>3 שאלות קצרות ומתחילים</div>
             </div>
 
-            {/* Website scanner */}
-            <div style={{ marginBottom: 18 }}>
-              <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
-                יש לך אתר? נסרוק אותו אוטומטית
-              </label>
-              <div style={{ display: "flex", gap: 8, flexDirection: "row-reverse" }}>
-                <button
-                  onClick={handleScanWebsite}
-                  onMouseDown={(e) => e.preventDefault()}
-                  disabled={!guestDraft.website.trim() || scanState === "loading"}
-                  style={{
-                    flexShrink: 0, padding: "10px 14px", borderRadius: 8, border: "none",
-                    background: scanState === "done" ? "rgba(52,211,153,0.2)" : guestDraft.website.trim() ? "linear-gradient(135deg,#7c3aed,#a855f7)" : "rgba(139,92,246,0.2)",
-                    color: scanState === "done" ? "#34d399" : "#fff",
-                    fontSize: "13px", fontWeight: 700, cursor: guestDraft.website.trim() && scanState !== "loading" ? "pointer" : "default",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {scanState === "loading" ? "סורק..." : scanState === "done" ? "✓ נסרק" : "סרוק"}
-                </button>
-                <input
-                  type="url"
-                  value={guestDraft.website}
-                  onChange={(e) => { setGuestDraft((p) => ({ ...p, website: e.target.value })); setScanState("idle"); setScanError(""); setScanResult(null); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleScanWebsite(); } }}
-                  placeholder="yourwebsite.com"
-                  style={{
-                    flex: 1, padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
-                    background: "rgba(255,255,255,0.06)", border: `1px solid ${scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)"}`,
-                    color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "ltr",
-                    fontFamily: "inherit",
-                  }}
-                  onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = scanState === "done" ? "rgba(52,211,153,0.5)" : scanState === "error" ? "rgba(248,113,113,0.5)" : "rgba(139,92,246,0.3)")}
-                />
-              </div>
-              {scanState === "error" && scanError && (
-                <div style={{ fontSize: 11, color: "#f87171", marginTop: 5 }}>{scanError}</div>
-              )}
-              {scanState === "done" && scanResult && (
-                <>
-                <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", gap: 10 }}>
-                  {scanResult.logo_url && (
-                    <img
-                      src={scanResult.logo_url}
-                      alt="לוגו"
-                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                      style={{ width: 36, height: 36, borderRadius: 6, objectFit: "contain", background: "#fff", flexShrink: 0, border: "1px solid rgba(255,255,255,0.15)" }}
-                    />
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {scanResult.company_name && <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginBottom: 2 }}>{scanResult.company_name}</div>}
-                    <div style={{ fontSize: 11, color: "rgba(196,181,253,0.7)", display: "flex", flexWrap: "wrap", gap: "2px 8px" }}>
-                      {scanResult.industry && <span>🏢 {scanResult.industry}</span>}
-                      {scanResult.email    && <span>✉ {scanResult.email}</span>}
-                      {scanResult.address  && <span>📍 {scanResult.address}</span>}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 11, color: "#34d399", flexShrink: 0 }}>✓ מולא</div>
-                </div>
-                {/* Color pickers */}
-                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, color: "rgba(196,181,253,0.7)", fontWeight: 600 }}>🎨 צבעי המותג:</span>
-                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                    <input type="color" value={guestDraft.color1} onChange={(e) => setGuestDraft(p => ({ ...p, color1: e.target.value }))}
-                      style={{ width: 28, height: 28, borderRadius: 6, border: "none", cursor: "pointer", padding: 0 }} />
-                    <span style={{ fontSize: 11, color: "rgba(196,181,253,0.5)", fontFamily: "monospace" }}>{guestDraft.color1}</span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                    <input type="color" value={guestDraft.color2} onChange={(e) => setGuestDraft(p => ({ ...p, color2: e.target.value }))}
-                      style={{ width: 28, height: 28, borderRadius: 6, border: "none", cursor: "pointer", padding: 0 }} />
-                    <span style={{ fontSize: 11, color: "rgba(196,181,253,0.5)", fontFamily: "monospace" }}>{guestDraft.color2}</span>
-                  </label>
-                </div>
-                </>
-              )}
-            </div>
-
-            {/* Manual fields */}
+            {/* Fields */}
             {(["company_name", "email", "industry"] as const).map((field) => (
               <div key={field} style={{ marginBottom: 14 }}>
                 <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
@@ -666,26 +525,6 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 />
               </div>
             ))}
-            {/* Optional phone field */}
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
-                טלפון <span style={{ fontSize: 10, fontWeight: 400, opacity: 0.6 }}>(אופציונלי)</span>
-              </label>
-              <input
-                type="tel"
-                value={guestDraft.phone}
-                onChange={(e) => setGuestDraft((p) => ({ ...p, phone: e.target.value }))}
-                placeholder="למשל: 050-1234567"
-                style={{
-                  width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
-                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
-                  color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "rtl",
-                  fontFamily: "inherit",
-                }}
-                onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
-                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)")}
-              />
-            </div>
             <button
               onClick={handleGuestSubmit}
               disabled={!canSubmit || submitChecking}
@@ -810,8 +649,6 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             quote={quote}
             companyName={effectiveContext?.company_name ?? ""}
             companyLogo={effectiveContext?.company_logo}
-            primaryColor={guestInfo?.color1 || undefined}
-            accentColor={guestInfo?.color2 || undefined}
             onApprove={handleApprove}
             approveState={approveState}
             approveLabel="יצירת הצעה"
