@@ -53,11 +53,11 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [quote, setQuote]         = useState<Partial<Quote>>({});
 
   // ── Guest state ───────────────────────────────────────────────────────────
-  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string; address?: string; logo_url?: string } | null>(null);
-  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "", address: "", logo_url: "", website: "" });
+  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string; address?: string; logo_url?: string; color1?: string; color2?: string } | null>(null);
+  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "", address: "", logo_url: "", website: "", color1: "#7c3aed", color2: "#a855f7" });
   const [scanState, setScanState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [scanError, setScanError] = useState("");
-  const [scanResult, setScanResult] = useState<{ logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string } | null>(null);
+  const [scanResult, setScanResult] = useState<{ logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string } | null>(null);
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
@@ -321,6 +321,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             industry:     guestInfo.industry,
             address:      guestInfo.address,
             logo_url:     guestInfo.logo_url,
+            color1:       guestInfo.color1,
+            color2:       guestInfo.color2,
             quote:        quoteWithTax,
           }),
         });
@@ -390,7 +392,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: site }),
       });
-      const data = await res.json() as { ok: boolean; message?: string; logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string };
+      const data = await res.json() as { ok: boolean; message?: string; logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string };
       if (!data.ok) {
         setScanState("error");
         setScanError(data.message ?? "לא הצלחנו לסרוק את האתר");
@@ -403,7 +405,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         setScanError("לא הצלחנו לחלץ פרטים — מלא ידנית");
         return;
       }
-      setScanResult({ logo_url: data.logo_url, company_name: data.company_name, industry: data.industry, email: data.email, address: data.address });
+      setScanResult({ logo_url: data.logo_url, company_name: data.company_name, industry: data.industry, email: data.email, address: data.address, color1: data.color1, color2: data.color2 });
       setGuestDraft((p) => ({
         ...p,
         company_name: data.company_name || p.company_name,
@@ -411,6 +413,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         email:        data.email        || p.email,
         address:      data.address      || p.address,
         logo_url:     data.logo_url     || p.logo_url,
+        color1:       data.color1       || p.color1,
+        color2:       data.color2       || p.color2,
       }));
       setScanState("done");
     } catch {
@@ -578,6 +582,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 <div style={{ fontSize: 11, color: "#f87171", marginTop: 5 }}>{scanError}</div>
               )}
               {scanState === "done" && scanResult && (
+                <>
                 <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", gap: 10 }}>
                   {scanResult.logo_url && (
                     <img
@@ -597,6 +602,21 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   </div>
                   <div style={{ fontSize: 11, color: "#34d399", flexShrink: 0 }}>✓ מולא</div>
                 </div>
+                {/* Color pickers */}
+                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: "rgba(196,181,253,0.7)", fontWeight: 600 }}>🎨 צבעי המותג:</span>
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                    <input type="color" value={guestDraft.color1} onChange={(e) => setGuestDraft(p => ({ ...p, color1: e.target.value }))}
+                      style={{ width: 28, height: 28, borderRadius: 6, border: "none", cursor: "pointer", padding: 0 }} />
+                    <span style={{ fontSize: 11, color: "rgba(196,181,253,0.5)", fontFamily: "monospace" }}>{guestDraft.color1}</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                    <input type="color" value={guestDraft.color2} onChange={(e) => setGuestDraft(p => ({ ...p, color2: e.target.value }))}
+                      style={{ width: 28, height: 28, borderRadius: 6, border: "none", cursor: "pointer", padding: 0 }} />
+                    <span style={{ fontSize: 11, color: "rgba(196,181,253,0.5)", fontFamily: "monospace" }}>{guestDraft.color2}</span>
+                  </label>
+                </div>
+                </>
               )}
             </div>
 
@@ -610,7 +630,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   type={field === "email" ? "email" : "text"}
                   value={guestDraft[field]}
                   onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined }); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined, color1: guestDraft.color1 || undefined, color2: guestDraft.color2 || undefined }); }}
                   placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: אינסטלציה"}
                   style={{
                     width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
@@ -624,7 +644,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               </div>
             ))}
             <button
-              onClick={() => { if (canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined }); }}
+              onClick={() => { if (canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined, color1: guestDraft.color1 || undefined, color2: guestDraft.color2 || undefined }); }}
               disabled={!canSubmit}
               style={{
                 marginTop: 10, width: "100%", padding: "13px 0", borderRadius: 50, border: "none",
@@ -746,6 +766,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             quote={quote}
             companyName={effectiveContext?.company_name ?? ""}
             companyLogo={effectiveContext?.company_logo}
+            primaryColor={guestInfo?.color1 || undefined}
+            accentColor={guestInfo?.color2 || undefined}
             onApprove={handleApprove}
             approveState={approveState}
             approveLabel="יצירת הצעה"
@@ -1102,10 +1124,14 @@ function QuotePanel({
   onUpdateTotal,
   onUpdateAddress,
   onBackToChat,
+  primaryColor,
+  accentColor,
 }: {
   quote: Partial<Quote>;
   companyName: string;
   companyLogo?: string;
+  primaryColor?: string;
+  accentColor?: string;
   onApprove: () => void;
   approveState: "idle" | "loading" | "success" | "error";
   onTitleChange: (title: string) => void;
@@ -1127,6 +1153,10 @@ function QuotePanel({
 
   const [editingTerms, setEditingTerms] = useState(false);
   const [termsDraft, setTermsDraft] = useState("");
+
+  const primary      = primaryColor || "#7c3aed";
+  const accent       = accentColor  || "#a855f7";
+  const primaryLight = primary + "26";
 
   const [editingComments, setEditingComments] = useState(false);
   const [commentsDraft, setCommentsDraft] = useState("");
@@ -1180,7 +1210,7 @@ function QuotePanel({
         .qp-section:hover .qp-edit-icon { opacity: 1; }
       }
       @keyframes qp-spin { to { transform: rotate(360deg); } }
-      .qp-spinner { width: 36px; height: 36px; border: 3px solid rgba(196,181,253,0.2); border-top-color: #a78bfa; border-radius: 50%; animation: qp-spin 0.8s linear infinite; margin: 0 auto; }
+      .qp-spinner { width: 36px; height: 36px; border: 3px solid rgba(196,181,253,0.2); border-top-color: ${accent}; border-radius: 50%; animation: qp-spin 0.8s linear infinite; margin: 0 auto; }
     `}</style>
     <div dir="rtl" style={{ flex: 1, overflowY: "auto", background: "#ffffff", color: "#1a1a2e", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "24px 20px", maxWidth: "100%" }}>
@@ -1205,9 +1235,9 @@ function QuotePanel({
             />
           ) : (
             <div style={{
-              width: 48, height: 48, borderRadius: 8, background: "#ede9fe",
+              width: 48, height: 48, borderRadius: 8, background: primaryLight,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "20px", fontWeight: 800, color: "#7c3aed", flexShrink: 0,
+              fontSize: "20px", fontWeight: 800, color: primary, flexShrink: 0,
             }}>
               {companyName.charAt(0)}
             </div>
@@ -1223,7 +1253,7 @@ function QuotePanel({
         </div>
 
         {/* Document header */}
-        <div style={{ textAlign: "center", marginBottom: 20, paddingBottom: 16, borderBottom: "2px solid #7c3aed" }}>
+        <div style={{ textAlign: "center", marginBottom: 20, paddingBottom: 16, borderBottom: `2px solid ${primary}` }}>
           <div style={{ fontSize: "20px", fontWeight: 800, color: "#1e1b4b", letterSpacing: -0.5 }}>
             הצעת מחיר
           </div>
@@ -1315,8 +1345,8 @@ function QuotePanel({
                     width: 22,
                     height: 22,
                     borderRadius: "50%",
-                    background: "#ede9fe",
-                    color: "#7c3aed",
+                    background: primaryLight,
+                    color: primary,
                     fontSize: "11px",
                     fontWeight: 700,
                     display: "flex",
@@ -1402,7 +1432,7 @@ function QuotePanel({
         {quote.total !== undefined && (
           <div style={{ marginBottom: 18, padding: "14px 16px", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "13px", color: "#7c3aed", fontWeight: 600 }}>סה&quot;כ לתשלום</span>
+              <span style={{ fontSize: "13px", color: primary, fontWeight: 600 }}>סה&quot;כ לתשלום</span>
               {editingTotal ? (
                 <input
                   autoFocus
@@ -1415,13 +1445,13 @@ function QuotePanel({
                     if (!isNaN(n) && n > 0) onUpdateTotal(n);
                   }}
                   onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingTotal(false); }}
-                  style={{ fontSize: "18px", fontWeight: 800, width: 110, textAlign: "right", border: "1px solid #a78bfa", borderRadius: 4, padding: "2px 6px", color: "#5b21b6", outline: "none", fontFamily: "inherit" }}
+                  style={{ fontSize: "18px", fontWeight: 800, width: 110, textAlign: "right", border: `1px solid ${accent}`, borderRadius: 4, padding: "2px 6px", color: primary, outline: "none", fontFamily: "inherit" }}
                 />
               ) : (
                 <span
                   onClick={() => { setTotalDraft(quote.total && quote.total > 0 ? String(quote.total) : ""); setEditingTotal(true); }}
                   title="לחץ לעריכה"
-                  style={{ fontSize: "20px", fontWeight: 800, color: quote.total > 0 ? "#5b21b6" : "#a78bfa", cursor: "pointer" }}
+                  style={{ fontSize: "20px", fontWeight: 800, color: quote.total > 0 ? primary : accent, cursor: "pointer" }}
                 >
                   {quote.total > 0 ? formatILS(quote.total) : "מחיר יעודכן ✏️"}
                 </span>
@@ -1527,7 +1557,7 @@ function QuotePanel({
                 border: "none",
                 background: approveState === "error"
                   ? "linear-gradient(135deg, #ef4444, #dc2626)"
-                  : "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
+                  : `linear-gradient(135deg, ${primary} 0%, ${accent} 100%)`,
                 color: "#fff",
                 fontSize: "17px",
                 fontWeight: 700,

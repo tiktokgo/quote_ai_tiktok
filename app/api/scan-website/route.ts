@@ -50,14 +50,73 @@ function resolveUrl(base: string, path: string): string {
   try { return new URL(path, base).href; } catch { return ""; }
 }
 
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&#64;/g, "@")
+    .replace(/&#x40;/gi, "@")
+    .replace(/&#46;/g, ".")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 function findEmail(html: string): string {
-  // Prefer mailto: links — more deliberate than inline text mentions
-  const mailto = html.match(/mailto:([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})/i);
+  const decoded = decodeHtmlEntities(html);
+  // 1. mailto: links — most deliberate mention
+  const mailto = decoded.match(/mailto:([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})/i);
   if (mailto) return mailto[1];
-  // Fall back to plain email pattern, skip generic/system addresses
-  const plain = html.match(/\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b/);
+  // 2. Plain email in regular HTML
+  const plain = decoded.match(/\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b/);
   if (plain && !/noreply|no-reply|privacy|sentry|@example/i.test(plain[1])) return plain[1];
   return "";
+}
+
+// Extract brand colors from combined HTML (CSS vars, theme-color, inline styles)
+function extractBrandColors(html: string): [string, string] {
+  const isHex = (v: string) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v);
+  const found: string[] = [];
+
+  // 1. CSS variables from <style> blocks
+  const styleBlocks = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)]
+    .map((m) => m[1])
+    .join("\n");
+  const cssVarNames = [
+    "--primary", "--brand", "--main-color", "--color-primary",
+    "--accent", "--secondary", "--highlight", "--color-secondary",
+    "--color-accent", "--primary-color", "--brand-color",
+  ];
+  for (const varName of cssVarNames) {
+    const m = styleBlocks.match(new RegExp(`${varName.replace("--", "--")}\\s*:\\s*(#[0-9a-fA-F]{3,8})`, "i"));
+    if (m && isHex(m[1]) && !found.includes(m[1].toLowerCase())) {
+      found.push(m[1].toLowerCase());
+      if (found.length === 2) break;
+    }
+  }
+
+  // 2. theme-color meta tag
+  if (found.length < 2) {
+    const tm =
+      html.match(/<meta[^>]+name=["']theme-color["'][^>]+content=["'](#[0-9a-fA-F]{3,8})["']/i) ||
+      html.match(/<meta[^>]+content=["'](#[0-9a-fA-F]{3,8})["'][^>]+name=["']theme-color["']/i);
+    if (tm && isHex(tm[1]) && !found.includes(tm[1].toLowerCase())) {
+      found.push(tm[1].toLowerCase());
+    }
+  }
+
+  // 3. background-color / color on <header> or <nav> inline styles
+  if (found.length < 2) {
+    const inlineMatches = [
+      ...html.matchAll(/<(?:header|nav)[^>]+style=["'][^"']*(?:background(?:-color)?|color)\s*:\s*(#[0-9a-fA-F]{3,8})/gi),
+    ];
+    for (const m of inlineMatches) {
+      if (isHex(m[1]) && !found.includes(m[1].toLowerCase())) {
+        found.push(m[1].toLowerCase());
+        if (found.length === 2) break;
+      }
+    }
+  }
+
+  return [found[0] || "#7c3aed", found[1] || "#a855f7"];
 }
 
 async function fetchHtml(url: string, timeout = 3000): Promise<string> {
@@ -85,42 +144,45 @@ export async function POST(req: NextRequest) {
   // Always-available logo via Google Favicon
   const google_favicon = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128` : "";
 
-  // ── Fetch homepage + contact page IN PARALLEL (both capped at 3s) ──────────
+  // ── Fetch homepage + 3 secondary pages IN PARALLEL ──────────────────────
   const origin = url.replace(/\/$/, "");
-  const [html, contactHtml] = await Promise.all([
+  const [html, contactHtml, aboutHtml] = await Promise.all([
     fetchHtml(url, 3000),
-    // Try /contact first, fall back to Hebrew and /contact-us
-    fetchHtml(`${origin}/contact`, 3000)
+    fetchHtml(`${origin}/contact`, 2500)
       .then((h) => h || fetchHtml(`${origin}/contact-us`, 2000))
+      .catch(() => ""),
+    fetchHtml(`${origin}/about`, 2000)
+      .then((h) => h || fetchHtml(`${origin}/about-us`, 2000))
       .catch(() => ""),
   ]);
 
-  const combinedHtml = html + "\n" + contactHtml;
+  const combinedHtml = html + "\n" + contactHtml + "\n" + aboutHtml;
 
   const ogImage    = extractMeta(html, "og:image");
   const ogSiteName = extractMeta(html, "og:site_name");
-  const themeColor = extractMeta(html, "theme-color");
   const touchIcon  = extractLink(html, "apple-touch-icon") || extractLink(html, "icon");
   const title      = extractTitle(html);
   const jsonLd     = extractJsonLd(html);
 
-  const logo_url    = resolveUrl(url, ogImage || touchIcon) || google_favicon;
-  const theme_color = themeColor || "";
+  const logo_url = resolveUrl(url, ogImage || touchIcon) || google_favicon;
+
+  // Extract brand colors from all fetched pages
+  const [color1, color2] = extractBrandColors(combinedHtml);
 
   // Build hints — everything we have
   const hints: Record<string, string> = { domain };
-  if (ogSiteName)  hints.og_site_name = ogSiteName;
-  if (title)       hints.page_title   = title;
-  if (jsonLd.name) hints.ld_name      = String(jsonLd.name);
-  if (jsonLd.email) hints.ld_email    = String(jsonLd.email);
+  if (ogSiteName)   hints.og_site_name = ogSiteName;
+  if (title)        hints.page_title   = title;
+  if (jsonLd.name)  hints.ld_name      = String(jsonLd.name);
+  if (jsonLd.email) hints.ld_email     = String(jsonLd.email);
   const addr = jsonLd.address as Record<string, string> | undefined;
   if (addr) hints.ld_address = [addr.streetAddress, addr.addressLocality, addr.addressRegion].filter(Boolean).join(", ");
 
-  // Search for email across homepage + contact page
+  // Search for email across all fetched pages
   const foundEmail = findEmail(combinedHtml);
   if (foundEmail) hints.found_email = foundEmail;
 
-  console.log(`[scan-website] domain:${domain} hints:${JSON.stringify(hints)}`);
+  console.log(`[scan-website] domain:${domain} hints:${JSON.stringify(hints)} colors:[${color1},${color2}]`);
 
   // ── AI extraction ──────────────────────────────────────────────────────────
   let company_name = "", industry = "", email = "", address = "";
@@ -134,7 +196,7 @@ export async function POST(req: NextRequest) {
 Return a JSON object with exactly these keys:
 - company_name: the business name. MUST infer from domain if not explicit (e.g. "cohen-plumbing.co.il" → "כהן אינסטלציה", "studio-design.com" → "Studio Design"). Never return empty.
 - industry: business category in Hebrew (e.g. "אינסטלציה", "שיפוצים", "עיצוב גרפי", "עריכת דין", "שיווק דיגיטלי"). Infer from domain/title. Never return empty.
-- email: contact email if found in hints, else "".
+- email: If hints contain "found_email" or "ld_email", you MUST return that value exactly. Otherwise return "".
 - address: physical address if found in hints, else "".`,
         },
         {
@@ -153,19 +215,17 @@ Return a JSON object with exactly these keys:
     industry     = String(parsed.industry     ?? "").trim();
     email        = String(parsed.email        ?? "").trim();
     address      = String(parsed.address      ?? "").trim();
-    // Reject placeholder-like values
     if (email === '""' || email === "null") email = "";
     if (address === '""' || address === "null") address = "";
-    // Use found_email from HTML if AI didn't extract one
+    // Always use found_email if AI didn't extract one
     if (!email && hints.found_email) email = hints.found_email;
   } catch (e) {
     console.warn("[scan-website] AI failed:", e instanceof Error ? e.message : e);
-    // Fallback: derive company name from domain
     company_name = domain.split(".")[0].replace(/[-_]/g, " ");
     if (hints.found_email) email = hints.found_email;
   }
 
-  console.log(`[scan-website] → name:"${company_name}" industry:"${industry}" email:"${email}" logo:"${logo_url}"`);
+  console.log(`[scan-website] → name:"${company_name}" industry:"${industry}" email:"${email}" color1:"${color1}" color2:"${color2}"`);
 
-  return Response.json({ ok: true, logo_url, theme_color, company_name, industry, email, address });
+  return Response.json({ ok: true, logo_url, company_name, industry, email, address, color1, color2 });
 }
