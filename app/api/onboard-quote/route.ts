@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  let body: { company_name: string; email: string; industry: string; address?: string; logo_url?: string; color1?: string; color2?: string; quote: PartialQuote };
+  let body: { company_name: string; email: string; industry: string; address?: string; logo_url?: string; color1?: string; color2?: string; company_phone?: string; quote: PartialQuote };
   try {
     body = await req.json();
   } catch {
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { company_name, email, industry, address, logo_url, color1, color2, quote } = body;
+  const { company_name, email, industry, address, logo_url, color1, color2, company_phone, quote } = body;
 
   const payload: Record<string, unknown> = {
     status:       "new_lead",
@@ -33,7 +33,8 @@ export async function POST(req: NextRequest) {
   if (address)  payload.address  = address;
   if (logo_url) payload.logo_url = logo_url;
   if (color1)   payload.color1   = color1;
-  if (color2)   payload.color2   = color2;
+  if (color2)         payload.color2         = color2;
+  if (company_phone) payload.company_phone = company_phone;
   if (quote.title)                payload.title          = quote.title;
   if (quote.client?.name)         payload.client_name    = quote.client.name;
   if (quote.client?.address)      payload.client_address = quote.client.address;

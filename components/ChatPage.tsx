@@ -53,11 +53,12 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [quote, setQuote]         = useState<Partial<Quote>>({});
 
   // ── Guest state ───────────────────────────────────────────────────────────
-  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string; address?: string; logo_url?: string; color1?: string; color2?: string } | null>(null);
-  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "", address: "", logo_url: "", website: "", color1: "#7c3aed", color2: "#a855f7" });
+  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string; address?: string; logo_url?: string; color1?: string; color2?: string; phone?: string } | null>(null);
+  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "", address: "", logo_url: "", website: "", color1: "#7c3aed", color2: "#a855f7", phone: "" });
   const [scanState, setScanState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [scanError, setScanError] = useState("");
-  const [scanResult, setScanResult] = useState<{ logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string } | null>(null);
+  const [scanResult, setScanResult] = useState<{ logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string; phone?: string } | null>(null);
+  const [submitChecking, setSubmitChecking] = useState(false);
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
@@ -323,6 +324,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             logo_url:     guestInfo.logo_url,
             color1:       guestInfo.color1,
             color2:       guestInfo.color2,
+            company_phone: guestInfo.phone,
             quote:        quoteWithTax,
           }),
         });
@@ -392,7 +394,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: site }),
       });
-      const data = await res.json() as { ok: boolean; message?: string; logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string };
+      const data = await res.json() as { ok: boolean; message?: string; logo_url?: string; company_name?: string; industry?: string; email?: string; address?: string; color1?: string; color2?: string; phone?: string };
       if (!data.ok) {
         setScanState("error");
         setScanError(data.message ?? "לא הצלחנו לסרוק את האתר");
@@ -405,7 +407,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         setScanError("לא הצלחנו לחלץ פרטים — מלא ידנית");
         return;
       }
-      setScanResult({ logo_url: data.logo_url, company_name: data.company_name, industry: data.industry, email: data.email, address: data.address, color1: data.color1, color2: data.color2 });
+      setScanResult({ logo_url: data.logo_url, company_name: data.company_name, industry: data.industry, email: data.email, address: data.address, color1: data.color1, color2: data.color2, phone: data.phone });
       setGuestDraft((p) => ({
         ...p,
         company_name: data.company_name || p.company_name,
@@ -415,6 +417,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         logo_url:     data.logo_url     || p.logo_url,
         color1:       data.color1       || p.color1,
         color2:       data.color2       || p.color2,
+        phone:        data.phone        || p.phone,
       }));
       setScanState("done");
     } catch {
@@ -427,6 +430,25 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   // ── Guest form (no token) ──────────────────────────────────────────────────
   if (isGuest && !guestInfo) {
     const canSubmit = guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim();
+    const guestInfoPayload = { company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined, color1: guestDraft.color1 || undefined, color2: guestDraft.color2 || undefined, phone: guestDraft.phone || undefined };
+    const handleGuestSubmit = async () => {
+      if (!canSubmit || submitChecking) return;
+      setSubmitChecking(true);
+      try {
+        const res = await fetch("/api/check-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: guestDraft.email }),
+        });
+        const data = await res.json() as { exists: boolean };
+        if (data.exists) {
+          window.location.href = "https://app.tik-tok.co.il";
+          return;
+        }
+      } catch { /* on error, proceed as new user */ }
+      setSubmitChecking(false);
+      setGuestInfo(guestInfoPayload);
+    };
     return (
       <div dir="rtl" style={{
         position: "relative",
@@ -630,7 +652,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   type={field === "email" ? "email" : "text"}
                   value={guestDraft[field]}
                   onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined, color1: guestDraft.color1 || undefined, color2: guestDraft.color2 || undefined }); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleGuestSubmit(); }}
                   placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: אינסטלציה"}
                   style={{
                     width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
@@ -643,22 +665,43 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 />
               </div>
             ))}
+            {/* Optional phone field */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: "block", fontSize: "12px", color: "#a78bfa", marginBottom: 5, fontWeight: 600 }}>
+                טלפון <span style={{ fontSize: 10, fontWeight: 400, opacity: 0.6 }}>(אופציונלי)</span>
+              </label>
+              <input
+                type="tel"
+                value={guestDraft.phone}
+                onChange={(e) => setGuestDraft((p) => ({ ...p, phone: e.target.value }))}
+                placeholder="למשל: 050-1234567"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8, boxSizing: "border-box",
+                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
+                  color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "rtl",
+                  fontFamily: "inherit",
+                }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)")}
+              />
+            </div>
             <button
-              onClick={() => { if (canSubmit) setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry, address: guestDraft.address || undefined, logo_url: guestDraft.logo_url || undefined, color1: guestDraft.color1 || undefined, color2: guestDraft.color2 || undefined }); }}
-              disabled={!canSubmit}
+              onClick={handleGuestSubmit}
+              disabled={!canSubmit || submitChecking}
               style={{
                 marginTop: 10, width: "100%", padding: "13px 0", borderRadius: 50, border: "none",
-                background: canSubmit
+                background: canSubmit && !submitChecking
                   ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)"
                   : "rgba(139,92,246,0.2)",
-                color: "#fff", fontSize: "15px", fontWeight: 700, cursor: canSubmit ? "pointer" : "default",
-                boxShadow: canSubmit ? "0 4px 24px rgba(139,92,246,0.45)" : "none",
+                color: "#fff", fontSize: "15px", fontWeight: 700, cursor: canSubmit && !submitChecking ? "pointer" : "default",
+                boxShadow: canSubmit && !submitChecking ? "0 4px 24px rgba(139,92,246,0.45)" : "none",
                 transition: "background 0.2s, box-shadow 0.2s",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                opacity: submitChecking ? 0.7 : 1,
               }}
             >
               <span>🏆</span>
-              <span>צרו הצעה מנצחת</span>
+              <span>{submitChecking ? "בודק..." : "צרו הצעה מנצחת"}</span>
             </button>
           </div>
 

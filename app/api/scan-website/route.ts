@@ -71,6 +71,16 @@ function findEmail(html: string): string {
   return "";
 }
 
+function findPhone(html: string): string {
+  // 1. tel: links — most reliable
+  const tel = html.match(/href=["']tel:([\d+\-\s()]{7,})/i);
+  if (tel) return tel[1].trim();
+  // 2. Israeli phone patterns: 05X-XXXXXXX, 0X-XXXXXXX, +972-XX-XXXXXXX
+  const plain = html.match(/(?:\+972[-\s]?|0)(?:[23489]\d|5[0-9])[-\s]?\d{3}[-\s]?\d{4}/);
+  if (plain) return plain[0].trim();
+  return "";
+}
+
 // Extract brand colors from combined HTML (CSS vars, theme-color, inline styles)
 function extractBrandColors(html: string): [string, string] {
   const isHex = (v: string) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v);
@@ -181,11 +191,13 @@ export async function POST(req: NextRequest) {
   // Search for email across all fetched pages
   const foundEmail = findEmail(combinedHtml);
   if (foundEmail) hints.found_email = foundEmail;
+  const foundPhone = findPhone(combinedHtml);
+  if (foundPhone) hints.found_phone = foundPhone;
 
   console.log(`[scan-website] domain:${domain} hints:${JSON.stringify(hints)} colors:[${color1},${color2}]`);
 
   // ── AI extraction ──────────────────────────────────────────────────────────
-  let company_name = "", industry = "", email = "", address = "";
+  let company_name = "", industry = "", email = "", address = "", phone = "";
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -217,15 +229,18 @@ Return a JSON object with exactly these keys:
     address      = String(parsed.address      ?? "").trim();
     if (email === '""' || email === "null") email = "";
     if (address === '""' || address === "null") address = "";
+    // Phone — AI doesn't extract it; use found_phone from HTML directly
+    if (hints.found_phone) phone = hints.found_phone;
     // Always use found_email if AI didn't extract one
     if (!email && hints.found_email) email = hints.found_email;
   } catch (e) {
     console.warn("[scan-website] AI failed:", e instanceof Error ? e.message : e);
     company_name = domain.split(".")[0].replace(/[-_]/g, " ");
     if (hints.found_email) email = hints.found_email;
+    if (hints.found_phone) phone = hints.found_phone;
   }
 
   console.log(`[scan-website] → name:"${company_name}" industry:"${industry}" email:"${email}" color1:"${color1}" color2:"${color2}"`);
 
-  return Response.json({ ok: true, logo_url, company_name, industry, email, address, color1, color2 });
+  return Response.json({ ok: true, logo_url, company_name, industry, email, address, phone, color1, color2 });
 }
