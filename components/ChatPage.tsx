@@ -355,8 +355,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             // New user: always redirect directly (not in iframe)
             if (guestRedirectUrl) {
               window.location.href = guestRedirectUrl;
+            } else {
+              setApproveState("idle"); // no redirect URL — release overlay so user isn't stuck
             }
-            // If no redirect_url returned, stay on page (do nothing)
           } else {
             // Existing user: redirect using NEXT_PUBLIC_REDIRECT_BASE + quote_id
             const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
