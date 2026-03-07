@@ -9,12 +9,16 @@ export async function POST(req: Request) {
   };
 
   const url = process.env.REVIEW_WEBHOOK_URL;
+  const key = process.env.BUBBLE_API_KEY;
   console.log(`[review] quote_id:${quote_id} user_id:${user_id} stars:${stars} comment:${comment} url_set:${!!url}`);
   if (url) {
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
+        },
         body: JSON.stringify({ quote_id, user_id, stars, comment }),
         signal: AbortSignal.timeout(8000),
       });

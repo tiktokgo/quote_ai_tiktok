@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 export async function POST(req: NextRequest) {
   const checkUrl = process.env.EMAIL_CHECK_URL;
+  const key = process.env.BUBBLE_API_KEY;
 
   // If not configured, always treat as new user — never block
   if (!checkUrl) {
@@ -20,7 +21,10 @@ export async function POST(req: NextRequest) {
   try {
     const res = await fetch(checkUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
       body: JSON.stringify({ email }),
       signal: AbortSignal.timeout(5000),
     });
