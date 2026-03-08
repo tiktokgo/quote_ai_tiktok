@@ -442,15 +442,19 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               📋 צפה בטיוטה ←
             </button>
           ) : (
-            <button onClick={() => setMobileView("chat")} style={{
-              width: "100%", padding: "10px 0", borderRadius: 50,
-              border: "1px solid rgba(139,92,246,0.7)",
-              background: "rgba(139,92,246,0.15)",
-              color: "#c4b5fd", fontSize: "15px", fontWeight: 800, cursor: "pointer",
-              animation: "pulse-glow 2s ease-in-out infinite",
-            }}>
-              ← חזרה לשיחה
-            </button>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <button onClick={() => setMobileView("chat")} style={{
+                padding: "8px 24px", borderRadius: 50,
+                border: "1px solid rgba(139,92,246,0.6)",
+                background: "rgba(139,92,246,0.12)",
+                color: "#c4b5fd", fontSize: "13px", fontWeight: 700, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 7,
+                animation: "pulse-glow 2s ease-in-out infinite",
+              }}>
+                <span>💬</span>
+                <span>חזרה לשיחה</span>
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -486,6 +490,48 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             onUpdateAddress={handleUpdateAddress}
             onBackToChat={isMobile ? () => setMobileView("chat") : undefined}
           />
+        )}
+        {/* Decorative chat input — mobile preview only — tapping returns to chat */}
+        {isMobile && mobileView === "preview" && (
+          <div
+            dir="rtl"
+            onClick={() => setMobileView("chat")}
+            style={{
+              flexShrink: 0,
+              padding: "10px 14px",
+              borderTop: "1px solid rgba(139,92,246,0.2)",
+              background: "rgba(0,0,0,0.45)",
+              backdropFilter: "blur(8px)",
+              cursor: "pointer",
+            }}
+          >
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(139,92,246,0.3)",
+              borderRadius: 16, padding: "9px 10px",
+              animation: "pulse-glow 2.5s ease-in-out infinite",
+            }}>
+              <div style={{
+                flexShrink: 0, width: 34, height: 34, borderRadius: "50%",
+                background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
+                color: "#fff", display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: "18px",
+              }}>←</div>
+              <div style={{
+                flex: 1, color: "rgba(226,232,240,0.35)", fontSize: "15px",
+                direction: "rtl", textAlign: "right",
+              }}>
+                תאר את העבודה...
+              </div>
+              <div style={{
+                flexShrink: 0, width: 34, height: 34, borderRadius: "50%",
+                border: "1px solid rgba(139,92,246,0.3)",
+                background: "rgba(139,92,246,0.1)", color: "#a78bfa",
+                display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px",
+              }}>🎙</div>
+            </div>
+          </div>
         )}
       </div>
 
