@@ -537,7 +537,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                       width: "100%", padding: "12px 14px", borderRadius: 10, boxSizing: "border-box",
                       background: "rgba(255,255,255,0.07)",
                       border: "1px solid rgba(139,92,246,0.35)",
-                      color: "#e2e8f0", fontSize: "15px", outline: "none", direction: "rtl",
+                      color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "rtl",
                       fontFamily: "inherit",
                       transition: "border-color 0.2s, background 0.2s",
                     }}
