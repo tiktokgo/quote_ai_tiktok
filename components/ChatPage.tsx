@@ -57,6 +57,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "" });
   const [submitChecking, setSubmitChecking] = useState(false);
   const [emailExistsAlert, setEmailExistsAlert] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
@@ -374,7 +375,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
 
   // ── Guest registration helpers ─────────────────────────────────────────────
-  const canSubmit = !!(guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim());
+  const canSubmit = !!(guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim() && termsAccepted);
 
   const handleGuestSubmit = useCallback(async () => {
     if (!canSubmit || submitChecking) return;
@@ -489,8 +490,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           backdropFilter: "blur(8px)",
           textAlign: "right",
         }}>
-          <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4b5fd" }}>{effectiveContext?.company_name ?? (isGuest ? "עוזר הצעות מחיר AI" : "")}</div>
-          <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.6)", marginTop: 2 }}>{effectiveContext?.industry ?? (isGuest ? "מלא את הפרטים כדי להתחיל" : "")}</div>
+          <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4b5fd" }}>{effectiveContext?.company_name ?? (isGuest ? "תיקתוק הצעות מחיר" : "")}</div>
+          <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.6)", marginTop: 2 }}>{effectiveContext?.industry ?? (isGuest ? "תוך 30 שניות יש לכם הצעת מחיר פצצה" : "")}</div>
         </div>
 
         {/* Messages */}
@@ -545,11 +546,36 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   />
                 </div>
               ))}
+              {/* Terms checkbox */}
+              <label style={{
+                display: "flex", alignItems: "flex-start", gap: 9, marginTop: 14, cursor: "pointer",
+                fontSize: "12px", color: "rgba(196,181,253,0.65)", lineHeight: 1.5, direction: "rtl",
+              }}>
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  style={{ marginTop: 2, accentColor: "#a78bfa", flexShrink: 0, width: 15, height: 15, cursor: "pointer" }}
+                />
+                <span>
+                  מאשר/ת את{" "}
+                  <a
+                    href="https://tik-tok.co.il/terms-privacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ color: "#a78bfa", textDecoration: "underline" }}
+                  >
+                    תנאי השימוש ומדיניות הפרטיות
+                  </a>
+                </span>
+              </label>
+
               <button
                 onClick={handleGuestSubmit}
                 disabled={!canSubmit || submitChecking}
                 style={{
-                  marginTop: 16, width: "100%", padding: "14px 0", borderRadius: 50, border: "none",
+                  marginTop: 12, width: "100%", padding: "14px 0", borderRadius: 50, border: "none",
                   background: canSubmit && !submitChecking
                     ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 55%, #ec4899 100%)"
                     : "rgba(139,92,246,0.12)",
