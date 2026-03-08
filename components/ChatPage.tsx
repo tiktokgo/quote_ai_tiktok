@@ -308,6 +308,22 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       let res: Response;
       const quoteWithTax = { ...quote, has_tax: quote.has_tax ?? false };
       if (isGuest && guestInfo) {
+        // Guard: re-check email before submitting — catches cases where form-stage check was skipped or EMAIL_CHECK_URL not configured
+        try {
+          const emailCheck = await fetch("/api/check-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: guestInfo.email }),
+          });
+          const emailData = await emailCheck.json() as { exists: boolean };
+          if (emailData.exists) {
+            setApproveState("idle");
+            setEmailExistsAlert(true);
+            setTimeout(() => { window.location.href = "https://app.tik-tok.co.il"; }, 3200);
+            return;
+          }
+        } catch { /* on error, proceed — never block the user */ }
+
         res = await fetch("/api/onboard-quote", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
