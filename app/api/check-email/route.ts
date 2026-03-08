@@ -33,15 +33,16 @@ export async function POST(req: NextRequest) {
     let data: Record<string, unknown> = {};
     try { data = JSON.parse(text); } catch { /* ignore */ }
 
-    // Support common response shapes: { exists }, { found }, { new }, { is_new }, { exist: "yes" }
+    // Bubble wraps return data in a "response" key: { status, response: { exists } }
+    const r = (data.response ?? {}) as Record<string, unknown>;
     const exists =
-      data.exists === true ||
-      data.found  === true ||
-      data.new    === false ||
-      data.is_new === false ||
-      data.exist  === "yes" ||   // string "yes"/"no" format
-      data.exist  === true ||    // boolean format on same key
-      res.status  === 409;       // HTTP 409 Conflict = already exists
+      data.exists === true  || r.exists === true  ||
+      data.found  === true  || r.found  === true  ||
+      data.new    === false || r.new    === false  ||
+      data.is_new === false || r.is_new === false  ||
+      data.exist  === "yes" || r.exist  === "yes"  ||
+      data.exist  === true  || r.exist  === true   ||
+      res.status  === 409;
 
     console.log(`[check-email] email:${email} status:${res.status} exists:${exists} response:${text.slice(0, 100)}`);
     return Response.json({ exists });
