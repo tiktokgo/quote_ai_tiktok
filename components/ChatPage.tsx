@@ -56,6 +56,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string } | null>(null);
   const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "" });
   const [submitChecking, setSubmitChecking] = useState(false);
+  const [emailExistsAlert, setEmailExistsAlert] = useState(false);
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
@@ -386,7 +387,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       });
       const data = await res.json() as { exists: boolean };
       if (data.exists) {
-        window.location.href = "https://app.tik-tok.co.il";
+        setSubmitChecking(false);
+        setEmailExistsAlert(true);
+        setTimeout(() => { window.location.href = "https://app.tik-tok.co.il"; }, 3200);
         return;
       }
     } catch { /* on error, proceed as new user */ }
@@ -723,6 +726,46 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} />
+
+      {/* ── Email-exists alert overlay ── */}
+      {emailExistsAlert && (
+        <div dir="rtl" style={{
+          position: "fixed", inset: 0, zIndex: 60,
+          background: "rgba(7,7,26,0.85)",
+          backdropFilter: "blur(12px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <style>{`
+            @keyframes email-progress { from { width: 0% } to { width: 100% } }
+            @keyframes email-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
+          `}</style>
+          <div style={{
+            background: "linear-gradient(160deg, rgba(109,40,217,0.18) 0%, rgba(8,6,24,0.98) 100%)",
+            border: "1px solid rgba(139,92,246,0.5)",
+            borderRadius: 22, padding: "36px 28px 28px",
+            maxWidth: 360, width: "90%", textAlign: "center",
+            boxShadow: "0 0 60px rgba(139,92,246,0.25), 0 16px 48px rgba(0,0,0,0.7)",
+          }}>
+            <div style={{ fontSize: 42, marginBottom: 14, animation: "email-pulse 2s ease-in-out infinite" }}>✉️</div>
+            <div style={{ fontSize: "19px", fontWeight: 800, color: "#e9e4ff", marginBottom: 10, lineHeight: 1.4 }}>
+              המייל כבר קיים במערכת
+            </div>
+            <div style={{ fontSize: "14px", color: "rgba(196,181,253,0.7)", lineHeight: 1.65, marginBottom: 24 }}>
+              אנחנו רואים שהמייל הזה כבר קיים אצלנו —<br />
+              מעבירים אותך לעמוד התחברות
+            </div>
+            {/* Progress bar */}
+            <div dir="ltr" style={{ background: "rgba(139,92,246,0.15)", borderRadius: 4, height: 5, overflow: "hidden" }}>
+              <div style={{
+                height: "100%",
+                background: "linear-gradient(90deg, #7c3aed, #a855f7, #ec4899)",
+                borderRadius: 4,
+                animation: "email-progress 3.2s linear forwards",
+              }} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Post-approve overlay ── */}
       {approveState === "success" && (
