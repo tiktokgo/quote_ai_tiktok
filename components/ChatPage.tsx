@@ -496,36 +496,49 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           {/* Guest registration card — shown only before info is submitted */}
           {isGuest && !guestInfo && (
             <div style={{
-              background: "rgba(15,12,40,0.85)",
-              border: "1px solid rgba(139,92,246,0.38)",
-              borderRadius: 16,
-              padding: "20px 18px",
-              marginBottom: 4,
-              backdropFilter: "blur(16px)",
+              maxWidth: 390,
+              width: "100%",
+              margin: "16px auto 8px",
+              boxSizing: "border-box",
+              background: "linear-gradient(160deg, rgba(109,40,217,0.13) 0%, rgba(8,6,24,0.97) 100%)",
+              border: "1px solid rgba(139,92,246,0.5)",
+              borderRadius: 22,
+              padding: "28px 22px 22px",
+              boxShadow: "0 0 60px rgba(139,92,246,0.2), 0 16px 48px rgba(0,0,0,0.7)",
+              backdropFilter: "blur(24px)",
             }}>
-              <div style={{ textAlign: "center", marginBottom: 16 }}>
-                <div style={{ fontSize: "17px", fontWeight: 800, color: "#c4b5fd" }}>יוצרים הצעת מחיר בקלות</div>
-                <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.5)", marginTop: 4 }}>3 שאלות קצרות ומתחילים</div>
+              {/* Icon + title */}
+              <div style={{ textAlign: "center", marginBottom: 22 }}>
+                <div style={{ fontSize: 38, lineHeight: 1, marginBottom: 10 }}>🚀</div>
+                <div style={{ fontSize: "20px", fontWeight: 800, color: "#e9e4ff", letterSpacing: "-0.3px", marginBottom: 6 }}>
+                  יוצרים הצעת מחיר בקלות
+                </div>
+                <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.55)", lineHeight: 1.5 }}>
+                  3 שאלות קצרות ואנחנו מתחילים
+                </div>
               </div>
+              {/* Fields */}
               {(["company_name", "email", "industry"] as const).map((field) => (
-                <div key={field} style={{ marginBottom: 10 }}>
-                  <label style={{ display: "block", fontSize: "11px", color: "#a78bfa", marginBottom: 4, fontWeight: 600 }}>
-                    {field === "company_name" ? "שם חברה" : field === "email" ? "אימייל" : "תחום עיסוק"}
+                <div key={field} style={{ marginBottom: 13 }}>
+                  <label style={{ display: "block", fontSize: "12px", color: "#c4b5fd", marginBottom: 6, fontWeight: 700, letterSpacing: "0.2px" }}>
+                    {field === "company_name" ? "🏢 שם חברה / עסק" : field === "email" ? "📧 כתובת אימייל" : "🔧 תחום עיסוק"}
                   </label>
                   <input
                     type={field === "email" ? "email" : "text"}
                     value={guestDraft[field]}
                     onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === "Enter") handleGuestSubmit(); }}
-                    placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: אינסטלציה"}
+                    placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: שיפוצים, ניקיון, גינון..."}
                     style={{
-                      width: "100%", padding: "9px 11px", borderRadius: 8, boxSizing: "border-box",
-                      background: "rgba(255,255,255,0.06)", border: "1px solid rgba(139,92,246,0.3)",
+                      width: "100%", padding: "12px 14px", borderRadius: 10, boxSizing: "border-box",
+                      background: "rgba(255,255,255,0.07)",
+                      border: "1px solid rgba(139,92,246,0.35)",
                       color: "#e2e8f0", fontSize: "15px", outline: "none", direction: "rtl",
                       fontFamily: "inherit",
+                      transition: "border-color 0.2s, background 0.2s",
                     }}
-                    onFocus={(e) => (e.currentTarget.style.borderColor = "#a78bfa")}
-                    onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)")}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = "#a78bfa"; e.currentTarget.style.background = "rgba(139,92,246,0.1)"; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(139,92,246,0.35)"; e.currentTarget.style.background = "rgba(255,255,255,0.07)"; }}
                   />
                 </div>
               ))}
@@ -533,14 +546,17 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 onClick={handleGuestSubmit}
                 disabled={!canSubmit || submitChecking}
                 style={{
-                  marginTop: 8, width: "100%", padding: "11px 0", borderRadius: 50, border: "none",
+                  marginTop: 16, width: "100%", padding: "14px 0", borderRadius: 50, border: "none",
                   background: canSubmit && !submitChecking
-                    ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)"
-                    : "rgba(139,92,246,0.2)",
-                  color: "#fff", fontSize: "14px", fontWeight: 700,
+                    ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 55%, #ec4899 100%)"
+                    : "rgba(139,92,246,0.12)",
+                  color: canSubmit && !submitChecking ? "#fff" : "rgba(196,181,253,0.35)",
+                  fontSize: "15px", fontWeight: 800,
                   cursor: canSubmit && !submitChecking ? "pointer" : "default",
                   opacity: submitChecking ? 0.7 : 1,
-                  transition: "background 0.2s",
+                  transition: "all 0.25s",
+                  boxShadow: canSubmit && !submitChecking ? "0 4px 28px rgba(139,92,246,0.55)" : "none",
+                  letterSpacing: "0.3px",
                 }}
               >
                 {submitChecking ? "בודק..." : "צרו הצעה מנצחת 🏆"}
@@ -577,8 +593,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           <div ref={bottomRef} />
         </div>
 
-        {/* Landing chips — only before first quote */}
-        {!hasQuote && (
+        {/* Landing chips — only before first quote and after guest form submitted */}
+        {!hasQuote && !(isGuest && !guestInfo) && (
           <div style={{ padding: "0 16px 10px", display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-start" }}>
             <button
               onClick={() => sendMessage("צור לי הצעת מחיר חדשה", quote)}
@@ -601,7 +617,17 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           borderTop: "1px solid rgba(139,92,246,0.2)",
           background: "rgba(0,0,0,0.3)",
           backdropFilter: "blur(8px)",
+          position: "relative",
+          opacity: isGuest && !guestInfo ? 0.28 : 1,
+          transition: "opacity 0.3s",
         }}>
+          {/* Click blocker: shows alert when guest hasn't submitted form yet */}
+          {isGuest && !guestInfo && (
+            <div
+              onClick={() => alert("כדי שניצור לך הצעת מחיר פצצה, מלא לנו את הפרטים האלו")}
+              style={{ position: "absolute", inset: 0, zIndex: 10, cursor: "pointer" }}
+            />
+          )}
           <div style={{
             display: "flex",
             alignItems: "flex-end",
