@@ -57,8 +57,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
   // ── Guest state ───────────────────────────────────────────────────────────
   const [guestInfo, setGuestInfo] = useState<{ company_name: string; address: string; phone: string; email: string } | null>(null);
-  // step: 0=ask company, 1=ask address, 2=ask phone, 3=ask email, 4=checking, 5=done
-  const [guestStep, setGuestStep] = useState<0|1|2|3|4|5>(0);
+  const [guestReady, setGuestReady] = useState(false);
+  // step: 0=work desc, 1=AI building, 2=ask company, 3=ask phone, 4=ask address, 5=ask email, 6=checking, done=guestReady
+  const [guestStep, setGuestStep] = useState<0|1|2|3|4|5|6>(0);
   const guestDraftRef = useRef({ company_name: "", address: "", phone: "" });
   const [submitChecking, setSubmitChecking] = useState(false);
   const [emailExistsAlert, setEmailExistsAlert] = useState(false);
@@ -69,7 +70,11 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     aiContext ?? (guestInfo ? {
       company_name: guestInfo.company_name,
       industry:     quote.industry ?? "כללי",
-      company_info: `כתובת: ${guestInfo.address} | טלפון: ${guestInfo.phone} | אימייל: ${guestInfo.email}`,
+      company_info: [
+        guestInfo.address && `כתובת: ${guestInfo.address}`,
+        guestInfo.phone   && `טלפון: ${guestInfo.phone}`,
+        guestInfo.email   && `אימייל: ${guestInfo.email}`,
+      ].filter(Boolean).join(" | ") || undefined,
       company_logo: guestLogoUrl,
     } : undefined);
 
@@ -103,14 +108,14 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     if (!isGuest) return;
     setMessages([{
       role: "assistant",
-      content: "שלום! 👋 לפני שמתחילים, שאלות קצרות — רק כדי להציג על גבי ההצעה.\n\nמה שם העסק שלך?",
+      content: "שלום! 👋 ספר לנו בקצרה על העבודה או השירות שתרצה להציע עבורו הצעת מחיר.",
     }]);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Existing users (JWT) or after guest onboarding completes
   useEffect(() => {
     if (!effectiveContext) return;
-    if (isGuest && !guestInfo) return; // guest not done yet
+    if (isGuest) return; // guest flow manages its own messages
     const greeting = effectiveContext.user_name
       ? `שלום ${effectiveContext.user_name}! אני עוזר הצעות המחיר שלך עבור ${effectiveContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`
       : `אני עוזר הצעות המחיר שלך עבור ${effectiveContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`;
@@ -205,32 +210,81 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
 
     if (guestStep === 0) {
-      guestDraftRef.current.company_name = trimmed;
+      // Step 0: user described work → call AI to build draft, then ask company name
       setGuestStep(1);
-      setMessages((prev) => [...prev, {
-        role: "assistant",
-        content: "מעולה! ומה הכתובת של העסק? (תופיע בכותרת ההצעה)",
-      }]);
-    } else if (guestStep === 1) {
-      guestDraftRef.current.address = trimmed;
+      setMessages((prev) => [...prev, { role: "assistant", content: "", loading: true }]);
+      setIsLoading(true);
+      try {
+        const tempCtx: AIContext = { company_name: "העסק שלך", industry: "" };
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: [{ role: "user", content: trimmed }], aiContext: tempCtx, currentQuote: {}, token }),
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let assistantText = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          for (const line of chunk.split("\n")) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6)) as { type: string; content?: string; quote?: PartialQuote };
+              if (event.type === "text" && event.content) {
+                assistantText += event.content + " ";
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: assistantText.trim(), loading: false };
+                  return updated;
+                });
+              } else if (event.type === "quote_update" && event.quote) {
+                setQuote((prev) => mergeQuote(prev, event.quote!));
+                setMobileView("preview");
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: `שגיאה: ${msg}`, loading: false };
+          return updated;
+        });
+      } finally {
+        setIsLoading(false);
+      }
+      setMessages((prev) => [...prev.filter((m) => !m.loading), { role: "assistant", content: "מה שם העסק שלך?" }]);
       setGuestStep(2);
-      setMessages((prev) => [...prev, {
-        role: "assistant",
-        content: "כמעט שם! ומה מספר הטלפון של העסק?",
-      }]);
+
     } else if (guestStep === 2) {
-      guestDraftRef.current.phone = trimmed;
+      guestDraftRef.current.company_name = trimmed;
+      setGuestInfo({ company_name: trimmed, phone: "", address: "", email: "" });
       setGuestStep(3);
-      setMessages((prev) => [...prev, {
-        role: "assistant",
-        content: "ולסיום — מה כתובת האימייל שלך? (נצטרך אותה לפתיחת החשבון)",
-      }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: "מה מספר הטלפון של העסק?" }]);
+
     } else if (guestStep === 3) {
-      const email = trimmed;
+      guestDraftRef.current.phone = trimmed;
+      setGuestInfo((prev) => prev ? { ...prev, phone: trimmed } : prev);
       setGuestStep(4);
+      setMessages((prev) => [...prev, { role: "assistant", content: "ומה הכתובת של העסק? (תופיע בכותרת ההצעה)" }]);
+
+    } else if (guestStep === 4) {
+      guestDraftRef.current.address = trimmed;
+      setGuestInfo((prev) => prev ? { ...prev, address: trimmed } : prev);
+      setGuestStep(5);
+      setMessages((prev) => [...prev, { role: "assistant", content: "ולסיום — מה כתובת האימייל שלך?" }]);
+
+    } else if (guestStep === 5) {
+      const email = trimmed;
+      setGuestStep(6);
       setSubmitChecking(true);
       setMessages((prev) => [...prev, { role: "assistant", content: "", loading: true }]);
-
       try {
         const res = await fetch("/api/check-email", {
           method: "POST",
@@ -246,25 +300,21 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           return;
         }
       } catch { /* on error, proceed as new user */ }
-
       setSubmitChecking(false);
-      setGuestStep(5);
-      const info = {
-        company_name: guestDraftRef.current.company_name,
-        address:      guestDraftRef.current.address,
-        phone:        guestDraftRef.current.phone,
-        email,
-      };
       setMessages((prev) => prev.filter((m) => !m.loading));
-      setGuestInfo(info);
+      setGuestInfo((prev) => prev
+        ? { ...prev, email }
+        : { company_name: guestDraftRef.current.company_name, address: guestDraftRef.current.address, phone: guestDraftRef.current.phone, email }
+      );
+      setGuestReady(true);
     }
-  }, [guestStep]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [guestStep, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isLoading || submitChecking) return;
     setInput("");
-    if (isGuest && !guestInfo) {
+    if (isGuest && !guestReady) {
       handleGuestStepAnswer(text);
     } else {
       sendMessage(text, quote);
@@ -493,8 +543,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         <div dir="rtl" style={{
           flexShrink: 0,
           padding: "8px 14px",
-          background: `rgba(var(--black-overlay-rgb), 0.97)`,
-          borderBottom: `1px solid rgba(var(--purple-rgb), 0.2)`,
+          background: "#ffffff",
+          borderBottom: "1px solid #e8eaed",
         }}>
           {mobileView === "chat" ? (
             <button onClick={() => setMobileView("preview")} style={{
@@ -566,18 +616,17 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             onClick={() => setMobileView("chat")}
             style={{
               flexShrink: 0,
-              padding: "10px 14px",
-              borderTop: `1px solid rgba(var(--purple-rgb), 0.2)`,
-              background: `rgba(var(--black-overlay-rgb), 0.45)`,
-              backdropFilter: "blur(8px)",
+              padding: "8px 14px 12px",
+              borderTop: "1px solid #e8eaed",
+              background: "#ffffff",
               cursor: "pointer",
             }}
           >
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
-              background: `rgba(var(--white-overlay-rgb), 0.06)`,
-              border: `1px solid rgba(var(--purple-rgb), 0.3)`,
-              borderRadius: 16, padding: "9px 10px",
+              background: "#f8f9fa",
+              border: "1px solid #e2e6ea",
+              borderRadius: 24, padding: "9px 12px",
               animation: "pulse-glow 2.5s ease-in-out infinite",
             }}>
               <div style={{
@@ -587,15 +636,15 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 justifyContent: "center", fontSize: "18px",
               }}>←</div>
               <div style={{
-                flex: 1, color: `rgba(var(--text-primary), 0.35)`, fontSize: "15px",
+                flex: 1, color: "#9ca3af", fontSize: "15px",
                 direction: "rtl", textAlign: "right",
               }}>
                 תאר את העבודה...
               </div>
               <div style={{
                 flexShrink: 0, width: 34, height: 34, borderRadius: "50%",
-                border: `1px solid rgba(var(--purple-rgb), 0.3)`,
-                background: `rgba(var(--purple-rgb), 0.1)`, color: "var(--text-accent)",
+                border: "1px solid #e2e6ea",
+                background: "#f3f4f6", color: "#6d28d9",
                 display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px",
               }}>🎙</div>
             </div>
@@ -603,21 +652,21 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         )}
       </div>
 
-      {/* ── RIGHT: Chat panel (dark) ─────────────────────────────────────── */}
+      {/* ── RIGHT: Chat panel ─────────────────────────────────────────────── */}
       <div dir="rtl" style={{
         flex: 1,
         display: isMobile && hasQuote && mobileView === "preview" ? "none" : "flex",
         flexDirection: "column",
         minWidth: 0,
-        color: "var(--text-primary)",
+        background: "#ffffff",
+        color: "#1a1a2e",
       }}>
 
         {/* Header */}
         <div style={{
           padding: "14px 20px",
-          borderBottom: `1px solid rgba(var(--purple-rgb), 0.2)`,
-          background: `rgba(var(--black-overlay-rgb), 0.3)`,
-          backdropFilter: "blur(8px)",
+          borderBottom: "1px solid #e8eaed",
+          background: "#ffffff",
           textAlign: "right",
           display: "flex",
           alignItems: "center",
@@ -625,8 +674,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           flexDirection: "row-reverse",
         }}>
           <div style={{ flex: 1, textAlign: "right" }}>
-            <div style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-secondary)" }}>{effectiveContext?.company_name ?? (isGuest ? "תיקתוק הצעות מחיר" : "")}</div>
-            <div style={{ fontSize: "12px", color: `rgba(var(--purple-light-rgb), 0.6)`, marginTop: 2 }}>{effectiveContext?.industry ?? (isGuest ? "תוך 30 שניות יש לכם הצעת מחיר פצצה" : "")}</div>
+            <div style={{ fontSize: "15px", fontWeight: 600, color: "#1a1a2e" }}>{effectiveContext?.company_name ?? (isGuest ? "תיקתוק הצעות מחיר" : "")}</div>
+            <div style={{ fontSize: "12px", color: "#6d28d9", marginTop: 2 }}>{effectiveContext?.industry ?? (isGuest ? "תוך 30 שניות יש לכם הצעת מחיר פצצה" : "")}</div>
           </div>
           <button
             onClick={toggle}
@@ -660,7 +709,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         </div>
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
 
 
           {messages.map((msg, i) => (
@@ -669,31 +718,47 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               // RTL: flex-start = right side, flex-end = left side
               justifyContent: msg.role === "user" ? "flex-start" : "flex-end",
             }}>
-              <div style={{
-                maxWidth: "80%",
-                padding: "10px 14px",
-                borderRadius: msg.role === "user" ? "18px 4px 18px 18px" : "4px 18px 18px 18px",
-                background: msg.role === "user"
-                  ? `rgba(var(--purple-rgb), 0.2)`
-                  : `rgba(var(--white-overlay-rgb), 0.08)`,
-                border: msg.role === "user"
-                  ? `1px solid rgba(var(--purple-rgb), 0.35)`
-                  : `1px solid rgba(var(--white-overlay-rgb), 0.1)`,
-                fontSize: "14px",
-                lineHeight: 1.65,
-                color: "var(--text-primary)",
-                wordBreak: "break-word",
-                textAlign: "right",
-              }}>
-                {msg.loading ? <QuoteLoader /> : msg.content}
-              </div>
+              {msg.role === "user" ? (
+                <div style={{
+                  maxWidth: "72%",
+                  padding: "12px 18px",
+                  borderRadius: 22,
+                  background: "#eef1ff",
+                  fontSize: "15px",
+                  lineHeight: 1.65,
+                  color: "#1a1a2e",
+                  wordBreak: "break-word",
+                  textAlign: "right",
+                }}>
+                  {msg.content}
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "90%" }}>
+                  {/* In RTL flex, first child = right side → icon appears to the right of text */}
+                  <div style={{
+                    flexShrink: 0, width: 28, height: 28, borderRadius: "50%",
+                    background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    marginTop: 2,
+                  }}>
+                    <SparkleIcon />
+                  </div>
+                  <div style={{
+                    flex: 1, fontSize: "15px", lineHeight: 1.75,
+                    color: "#1a1a2e", textAlign: "right", paddingTop: 2,
+                    wordBreak: "break-word",
+                  }}>
+                    {msg.loading ? <QuoteLoader /> : msg.content}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
           <div ref={bottomRef} />
         </div>
 
         {/* Landing chips — only before first quote and after guest onboarding done */}
-        {!hasQuote && !(isGuest && guestStep < 5) && (
+        {!hasQuote && (!isGuest || guestReady) && (
           <div style={{ padding: "0 16px 10px", display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-start" }}>
             <button
               onClick={() => sendMessage("צור לי הצעת מחיר חדשה", quote)}
@@ -712,20 +777,19 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
         {/* Input bar */}
         <div style={{
-          padding: "10px 14px",
-          borderTop: `1px solid rgba(var(--purple-rgb), 0.2)`,
-          background: `rgba(var(--black-overlay-rgb), 0.3)`,
-          backdropFilter: "blur(8px)",
+          padding: "8px 16px 16px",
+          background: "transparent",
           position: "relative",
         }}>
           <div style={{
             display: "flex",
             alignItems: "flex-end",
             gap: 8,
-            background: `rgba(var(--white-overlay-rgb), 0.06)`,
-            border: `1px solid rgba(var(--purple-rgb), 0.25)`,
-            borderRadius: 16,
-            padding: "8px 10px",
+            background: "#ffffff",
+            border: "1px solid #e2e6ea",
+            borderRadius: 28,
+            padding: "10px 14px",
+            boxShadow: "0 1px 8px rgba(0,0,0,0.07)",
           }}>
             {/* Mic — LEFT in JSX = RIGHT in RTL */}
             <button
@@ -737,9 +801,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 width: 34,
                 height: 34,
                 borderRadius: "50%",
-                border: isListening ? "1px solid rgba(239,68,68,0.6)" : `1px solid rgba(var(--purple-rgb), 0.3)`,
-                background: isListening ? "rgba(239,68,68,0.15)" : `rgba(var(--purple-rgb), 0.1)`,
-                color: isListening ? "#f87171" : "var(--text-accent)",
+                border: isListening ? "1px solid rgba(239,68,68,0.5)" : "1px solid #e2e6ea",
+                background: isListening ? "rgba(239,68,68,0.1)" : "transparent",
+                color: isListening ? "#ef4444" : "#6d28d9",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -764,7 +828,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 background: "transparent",
                 border: "none",
                 outline: "none",
-                color: "var(--text-primary)",
+                color: "#1a1a2e",
                 fontSize: "16px",
                 lineHeight: 1.5,
                 resize: "none",
@@ -794,8 +858,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 border: "none",
                 background: input.trim() && !isLoading && !submitChecking
                   ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
-                  : `rgba(var(--purple-rgb), 0.2)`,
-                color: "#fff",
+                  : "#e8eaed",
+                color: input.trim() && !isLoading && !submitChecking ? "#fff" : "#9ca3af",
                 cursor: input.trim() && !isLoading && !submitChecking ? "pointer" : "default",
                 display: "flex",
                 alignItems: "center",
@@ -1612,11 +1676,11 @@ function mergeQuote(current: Partial<Quote>, update: PartialQuote): Partial<Quot
 const chipStyle: React.CSSProperties = {
   padding: "8px 18px",
   borderRadius: 20,
-  border: `1px solid rgba(var(--purple-rgb), 0.35)`,
-  background: `rgba(var(--purple-rgb), 0.12)`,
-  color: "var(--text-secondary)",
-  fontSize: "13px",
-  fontWeight: 600,
+  border: "1px solid #e0e0e0",
+  background: "#ffffff",
+  color: "#6d28d9",
+  fontSize: "14px",
+  fontWeight: 500,
   cursor: "pointer",
   whiteSpace: "nowrap",
   transition: "background 0.2s",
