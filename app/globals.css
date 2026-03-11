@@ -1,5 +1,37 @@
 @import "tailwindcss";
 
+:root, [data-theme="light"] {
+  --bg-base: #faf8ff;
+  --bg-mid: #f3f0ff;
+  --bg-end: #ede9ff;
+  --text-primary: #1a1a2e;
+  --text-secondary: #6d28d9;
+  --text-accent: #7c3aed;
+  --text-heading: #3b0764;
+  --purple-rgb: 109, 40, 217;
+  --purple-light-rgb: 139, 92, 246;
+  --white-overlay-rgb: 255, 255, 255;
+  --black-overlay-rgb: 0, 0, 0;
+  --card-bg-start-rgb: 109, 40, 217;
+  --card-bg-end-rgb: 240, 235, 255;
+}
+
+[data-theme="dark"] {
+  --bg-base: #07071a;
+  --bg-mid: #0b0920;
+  --bg-end: #0f0c28;
+  --text-primary: #e2e8f0;
+  --text-secondary: #c4b5fd;
+  --text-accent: #a78bfa;
+  --text-heading: #e9e4ff;
+  --purple-rgb: 139, 92, 246;
+  --purple-light-rgb: 196, 181, 253;
+  --white-overlay-rgb: 255, 255, 255;
+  --black-overlay-rgb: 0, 0, 0;
+  --card-bg-start-rgb: 109, 40, 217;
+  --card-bg-end-rgb: 8, 6, 24;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -12,8 +44,8 @@ html, body {
 }
 
 body {
-  background: #07071a;
-  color: #e2e8f0;
+  background: var(--bg-base);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-family: 'Rubik', Arial, sans-serif;
