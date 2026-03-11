@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { AIContext } from "@/lib/verifyToken";
 import type { Quote, PartialQuote } from "@/lib/quoteSchema";
+import { useTheme } from "@/contexts/ThemeContext";
 
 // ── Loader animation ──────────────────────────────────────────────────────────
 function QuoteLoader() {
@@ -13,7 +14,7 @@ function QuoteLoader() {
           0%, 100% { opacity: 0.2; transform: scale(0.8); }
           40%, 60%  { opacity: 1;   transform: scale(1.2); }
         }
-        .ql-d  { animation: ql-dot 1.4s ease-in-out infinite; border-radius: 50%; width: 8px; height: 8px; background: rgba(139,92,246,0.8); display: inline-block; margin: 0 3px; }
+        .ql-d  { animation: ql-dot 1.4s ease-in-out infinite; border-radius: 50%; width: 8px; height: 8px; background: rgba(var(--purple-rgb), 0.8); display: inline-block; margin: 0 3px; }
         .ql-d1 { animation-delay: 0s; }
         .ql-d2 { animation-delay: 0.22s; }
         .ql-d3 { animation-delay: 0.44s; }
@@ -52,18 +53,24 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [quote, setQuote]         = useState<Partial<Quote>>({});
 
+  const { theme, toggle } = useTheme();
+
   // ── Guest state ───────────────────────────────────────────────────────────
-  const [guestInfo, setGuestInfo] = useState<{ company_name: string; email: string; industry: string } | null>(null);
-  const [guestDraft, setGuestDraft] = useState({ company_name: "", email: "", industry: "" });
+  const [guestInfo, setGuestInfo] = useState<{ company_name: string; address: string; phone: string; email: string } | null>(null);
+  // step: 0=ask company, 1=ask address, 2=ask phone, 3=ask email, 4=checking, 5=done
+  const [guestStep, setGuestStep] = useState<0|1|2|3|4|5>(0);
+  const guestDraftRef = useRef({ company_name: "", address: "", phone: "" });
   const [submitChecking, setSubmitChecking] = useState(false);
   const [emailExistsAlert, setEmailExistsAlert] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [guestLogoUrl, setGuestLogoUrl] = useState<string | undefined>();
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
       company_name: guestInfo.company_name,
-      industry:     guestInfo.industry,
-      company_info: guestInfo.email ? `אימייל: ${guestInfo.email}` : "",
+      industry:     quote.industry ?? "כללי",
+      company_info: `כתובת: ${guestInfo.address} | טלפון: ${guestInfo.phone} | אימייל: ${guestInfo.email}`,
+      company_logo: guestLogoUrl,
     } : undefined);
 
   // ── Mobile state ──────────────────────────────────────────────────────────
@@ -91,8 +98,19 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Guest: show first onboarding question on mount
+  useEffect(() => {
+    if (!isGuest) return;
+    setMessages([{
+      role: "assistant",
+      content: "שלום! 👋 לפני שמתחילים, שאלות קצרות — רק כדי להציג על גבי ההצעה.\n\nמה שם העסק שלך?",
+    }]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Existing users (JWT) or after guest onboarding completes
   useEffect(() => {
     if (!effectiveContext) return;
+    if (isGuest && !guestInfo) return; // guest not done yet
     const greeting = effectiveContext.user_name
       ? `שלום ${effectiveContext.user_name}! אני עוזר הצעות המחיר שלך עבור ${effectiveContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`
       : `אני עוזר הצעות המחיר שלך עבור ${effectiveContext.company_name}. ספר לי על העבודה ואני אבנה הצעת מחיר מיד.`;
@@ -179,13 +197,80 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     }
   }, [messages, aiContext]);
 
+  // ── Guest step-by-step onboarding ─────────────────────────────────────────
+  const handleGuestStepAnswer = useCallback(async (answer: string) => {
+    const trimmed = answer.trim();
+    if (!trimmed) return;
+
+    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+
+    if (guestStep === 0) {
+      guestDraftRef.current.company_name = trimmed;
+      setGuestStep(1);
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        content: "מעולה! ומה הכתובת של העסק? (תופיע בכותרת ההצעה)",
+      }]);
+    } else if (guestStep === 1) {
+      guestDraftRef.current.address = trimmed;
+      setGuestStep(2);
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        content: "כמעט שם! ומה מספר הטלפון של העסק?",
+      }]);
+    } else if (guestStep === 2) {
+      guestDraftRef.current.phone = trimmed;
+      setGuestStep(3);
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        content: "ולסיום — מה כתובת האימייל שלך? (נצטרך אותה לפתיחת החשבון)",
+      }]);
+    } else if (guestStep === 3) {
+      const email = trimmed;
+      setGuestStep(4);
+      setSubmitChecking(true);
+      setMessages((prev) => [...prev, { role: "assistant", content: "", loading: true }]);
+
+      try {
+        const res = await fetch("/api/check-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json() as { exists: boolean };
+        if (data.exists) {
+          setSubmitChecking(false);
+          setEmailExistsAlert(true);
+          setMessages((prev) => prev.filter((m) => !m.loading));
+          setTimeout(() => { window.location.href = "https://app.tik-tok.co.il"; }, 3200);
+          return;
+        }
+      } catch { /* on error, proceed as new user */ }
+
+      setSubmitChecking(false);
+      setGuestStep(5);
+      const info = {
+        company_name: guestDraftRef.current.company_name,
+        address:      guestDraftRef.current.address,
+        phone:        guestDraftRef.current.phone,
+        email,
+      };
+      setMessages((prev) => prev.filter((m) => !m.loading));
+      setGuestInfo(info);
+    }
+  }, [guestStep]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || submitChecking) return;
     setInput("");
-    sendMessage(text, quote);
+    if (isGuest && !guestInfo) {
+      handleGuestStepAnswer(text);
+    } else {
+      sendMessage(text, quote);
+    }
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [input, isLoading, quote, sendMessage]);
+  }, [input, isLoading, submitChecking, isGuest, guestInfo, quote, sendMessage, handleGuestStepAnswer]);
 
   // ── PDF: Improve quote ────────────────────────────────────────────────────
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -328,10 +413,13 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            company_name: guestInfo.company_name,
-            email:        guestInfo.email,
-            industry:     guestInfo.industry,
-            quote:        quoteWithTax,
+            company_name:  guestInfo.company_name,
+            email:         guestInfo.email,
+            industry:      quote.industry ?? "כללי",
+            address:       guestInfo.address,
+            company_phone: guestInfo.phone,
+            logo_url:      guestLogoUrl,
+            quote:         quoteWithTax,
           }),
         });
       } else {
@@ -387,32 +475,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       setApproveState("error");
       setTimeout(() => setApproveState("idle"), 3000);
     }
-  }, [aiContext, isGuest, guestInfo, quote]);
+  }, [aiContext, isGuest, guestInfo, quote, guestLogoUrl]);
 
-
-  // ── Guest registration helpers ─────────────────────────────────────────────
-  const canSubmit = !!(guestDraft.company_name.trim() && guestDraft.email.trim() && guestDraft.industry.trim() && termsAccepted);
-
-  const handleGuestSubmit = useCallback(async () => {
-    if (!canSubmit || submitChecking) return;
-    setSubmitChecking(true);
-    try {
-      const res = await fetch("/api/check-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: guestDraft.email }),
-      });
-      const data = await res.json() as { exists: boolean };
-      if (data.exists) {
-        setSubmitChecking(false);
-        setEmailExistsAlert(true);
-        setTimeout(() => { window.location.href = "https://app.tik-tok.co.il"; }, 3200);
-        return;
-      }
-    } catch { /* on error, proceed as new user */ }
-    setSubmitChecking(false);
-    setGuestInfo({ company_name: guestDraft.company_name, email: guestDraft.email, industry: guestDraft.industry });
-  }, [canSubmit, submitChecking, guestDraft]);
 
   return (
     // Outer: column flex — tab bar on top (mobile), panels row below
@@ -420,7 +484,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       display: "flex",
       flexDirection: "column",
       height: "100dvh",
-      background: "linear-gradient(180deg, #07071a 0%, #0b0920 50%, #0f0c28 100%)",
+      background: "linear-gradient(180deg, var(--bg-base) 0%, var(--bg-mid) 50%, var(--bg-end) 100%)",
       overflow: "hidden",
     }}>
 
@@ -429,15 +493,15 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         <div dir="rtl" style={{
           flexShrink: 0,
           padding: "8px 14px",
-          background: "rgba(7,7,26,0.97)",
-          borderBottom: "1px solid rgba(139,92,246,0.2)",
+          background: `rgba(var(--black-overlay-rgb), 0.97)`,
+          borderBottom: `1px solid rgba(var(--purple-rgb), 0.2)`,
         }}>
           {mobileView === "chat" ? (
             <button onClick={() => setMobileView("preview")} style={{
               width: "100%", padding: "10px 0", borderRadius: 50, border: "none",
               background: "linear-gradient(135deg, #7c3aed 0%, #a855f7 60%, #ec4899 100%)",
               color: "#fff", fontSize: "15px", fontWeight: 700, cursor: "pointer",
-              boxShadow: "0 2px 16px rgba(139,92,246,0.4)", letterSpacing: 0.2,
+              boxShadow: `0 2px 16px rgba(var(--purple-rgb), 0.4)`, letterSpacing: 0.2,
             }}>
               📋 צפה בטיוטה ←
             </button>
@@ -445,9 +509,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             <div style={{ display: "flex", justifyContent: "center" }}>
               <button onClick={() => setMobileView("chat")} style={{
                 padding: "8px 24px", borderRadius: 50,
-                border: "1px solid rgba(139,92,246,0.6)",
-                background: "rgba(139,92,246,0.12)",
-                color: "#c4b5fd", fontSize: "13px", fontWeight: 700, cursor: "pointer",
+                border: `1px solid rgba(var(--purple-rgb), 0.6)`,
+                background: `rgba(var(--purple-rgb), 0.12)`,
+                color: "var(--text-secondary)", fontSize: "13px", fontWeight: 700, cursor: "pointer",
                 display: "flex", alignItems: "center", gap: 7,
                 animation: "pulse-glow 2s ease-in-out infinite",
               }}>
@@ -489,6 +553,10 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             onUpdateTotal={handleUpdateTotal}
             onUpdateAddress={handleUpdateAddress}
             onBackToChat={isMobile ? () => setMobileView("chat") : undefined}
+            isGuest={isGuest}
+            termsAccepted={termsAccepted}
+            onTermsChange={setTermsAccepted}
+            onLogoUpload={setGuestLogoUrl}
           />
         )}
         {/* Decorative chat input — mobile preview only — tapping returns to chat */}
@@ -499,16 +567,16 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             style={{
               flexShrink: 0,
               padding: "10px 14px",
-              borderTop: "1px solid rgba(139,92,246,0.2)",
-              background: "rgba(0,0,0,0.45)",
+              borderTop: `1px solid rgba(var(--purple-rgb), 0.2)`,
+              background: `rgba(var(--black-overlay-rgb), 0.45)`,
               backdropFilter: "blur(8px)",
               cursor: "pointer",
             }}
           >
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(139,92,246,0.3)",
+              background: `rgba(var(--white-overlay-rgb), 0.06)`,
+              border: `1px solid rgba(var(--purple-rgb), 0.3)`,
               borderRadius: 16, padding: "9px 10px",
               animation: "pulse-glow 2.5s ease-in-out infinite",
             }}>
@@ -519,15 +587,15 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 justifyContent: "center", fontSize: "18px",
               }}>←</div>
               <div style={{
-                flex: 1, color: "rgba(226,232,240,0.35)", fontSize: "15px",
+                flex: 1, color: `rgba(var(--text-primary), 0.35)`, fontSize: "15px",
                 direction: "rtl", textAlign: "right",
               }}>
                 תאר את העבודה...
               </div>
               <div style={{
                 flexShrink: 0, width: 34, height: 34, borderRadius: "50%",
-                border: "1px solid rgba(139,92,246,0.3)",
-                background: "rgba(139,92,246,0.1)", color: "#a78bfa",
+                border: `1px solid rgba(var(--purple-rgb), 0.3)`,
+                background: `rgba(var(--purple-rgb), 0.1)`, color: "var(--text-accent)",
                 display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px",
               }}>🎙</div>
             </div>
@@ -541,119 +609,59 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         display: isMobile && hasQuote && mobileView === "preview" ? "none" : "flex",
         flexDirection: "column",
         minWidth: 0,
-        color: "#e2e8f0",
+        color: "var(--text-primary)",
       }}>
 
         {/* Header */}
         <div style={{
           padding: "14px 20px",
-          borderBottom: "1px solid rgba(139,92,246,0.2)",
-          background: "rgba(0,0,0,0.3)",
+          borderBottom: `1px solid rgba(var(--purple-rgb), 0.2)`,
+          background: `rgba(var(--black-overlay-rgb), 0.3)`,
           backdropFilter: "blur(8px)",
           textAlign: "right",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexDirection: "row-reverse",
         }}>
-          <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4b5fd" }}>{effectiveContext?.company_name ?? (isGuest ? "תיקתוק הצעות מחיר" : "")}</div>
-          <div style={{ fontSize: "12px", color: "rgba(196,181,253,0.6)", marginTop: 2 }}>{effectiveContext?.industry ?? (isGuest ? "תוך 30 שניות יש לכם הצעת מחיר פצצה" : "")}</div>
+          <div style={{ flex: 1, textAlign: "right" }}>
+            <div style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-secondary)" }}>{effectiveContext?.company_name ?? (isGuest ? "תיקתוק הצעות מחיר" : "")}</div>
+            <div style={{ fontSize: "12px", color: `rgba(var(--purple-light-rgb), 0.6)`, marginTop: 2 }}>{effectiveContext?.industry ?? (isGuest ? "תוך 30 שניות יש לכם הצעת מחיר פצצה" : "")}</div>
+          </div>
+          <button
+            onClick={toggle}
+            title={theme === 'dark' ? 'עבור למצב בהיר' : 'עבור למצב כהה'}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              padding: '6px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            {theme === 'dark' ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+            )}
+          </button>
         </div>
 
         {/* Messages */}
         <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
 
-          {/* Guest registration card — shown only before info is submitted */}
-          {isGuest && !guestInfo && (
-            <div style={{
-              maxWidth: 390,
-              width: "100%",
-              margin: "16px auto 8px",
-              boxSizing: "border-box",
-              background: "linear-gradient(160deg, rgba(109,40,217,0.13) 0%, rgba(8,6,24,0.97) 100%)",
-              border: "1px solid rgba(139,92,246,0.5)",
-              borderRadius: 22,
-              padding: "28px 22px 22px",
-              boxShadow: "0 0 60px rgba(139,92,246,0.2), 0 16px 48px rgba(0,0,0,0.7)",
-              backdropFilter: "blur(24px)",
-            }}>
-              {/* Icon + title */}
-              <div style={{ textAlign: "center", marginBottom: 22 }}>
-                <div style={{ fontSize: 38, lineHeight: 1, marginBottom: 10 }}>🚀</div>
-                <div style={{ fontSize: "20px", fontWeight: 800, color: "#e9e4ff", letterSpacing: "-0.3px", marginBottom: 6 }}>
-                  יוצרים הצעת מחיר בקלות
-                </div>
-                <div style={{ fontSize: "13px", color: "rgba(196,181,253,0.55)", lineHeight: 1.5 }}>
-                  3 שאלות קצרות ואנחנו מתחילים
-                </div>
-              </div>
-              {/* Fields */}
-              {(["company_name", "email", "industry"] as const).map((field) => (
-                <div key={field} style={{ marginBottom: 13 }}>
-                  <label style={{ display: "block", fontSize: "12px", color: "#c4b5fd", marginBottom: 6, fontWeight: 700, letterSpacing: "0.2px" }}>
-                    {field === "company_name" ? "🏢 שם חברה / עסק" : field === "email" ? "📧 כתובת אימייל" : "🔧 תחום עיסוק"}
-                  </label>
-                  <input
-                    type={field === "email" ? "email" : "text"}
-                    value={guestDraft[field]}
-                    onChange={(e) => setGuestDraft((p) => ({ ...p, [field]: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleGuestSubmit(); }}
-                    placeholder={field === "company_name" ? "למשל: אינסטלציה כהן" : field === "email" ? "your@email.com" : "למשל: שיפוצים, ניקיון, גינון..."}
-                    style={{
-                      width: "100%", padding: "12px 14px", borderRadius: 10, boxSizing: "border-box",
-                      background: "rgba(255,255,255,0.07)",
-                      border: "1px solid rgba(139,92,246,0.35)",
-                      color: "#e2e8f0", fontSize: "16px", outline: "none", direction: "rtl",
-                      fontFamily: "inherit",
-                      transition: "border-color 0.2s, background 0.2s",
-                    }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = "#a78bfa"; e.currentTarget.style.background = "rgba(139,92,246,0.1)"; }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(139,92,246,0.35)"; e.currentTarget.style.background = "rgba(255,255,255,0.07)"; }}
-                  />
-                </div>
-              ))}
-              {/* Terms checkbox */}
-              <label style={{
-                display: "flex", alignItems: "flex-start", gap: 9, marginTop: 14, cursor: "pointer",
-                fontSize: "12px", color: "rgba(196,181,253,0.65)", lineHeight: 1.5, direction: "rtl",
-              }}>
-                <input
-                  type="checkbox"
-                  checked={termsAccepted}
-                  onChange={(e) => setTermsAccepted(e.target.checked)}
-                  style={{ marginTop: 2, accentColor: "#a78bfa", flexShrink: 0, width: 15, height: 15, cursor: "pointer" }}
-                />
-                <span>
-                  מאשר/ת את{" "}
-                  <a
-                    href="https://tik-tok.co.il/terms-privacy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ color: "#a78bfa", textDecoration: "underline" }}
-                  >
-                    תנאי השימוש ומדיניות הפרטיות
-                  </a>
-                </span>
-              </label>
-
-              <button
-                onClick={handleGuestSubmit}
-                disabled={!canSubmit || submitChecking}
-                style={{
-                  marginTop: 12, width: "100%", padding: "14px 0", borderRadius: 50, border: "none",
-                  background: canSubmit && !submitChecking
-                    ? "linear-gradient(135deg, #7c3aed 0%, #a855f7 55%, #ec4899 100%)"
-                    : "rgba(139,92,246,0.12)",
-                  color: canSubmit && !submitChecking ? "#fff" : "rgba(196,181,253,0.35)",
-                  fontSize: "15px", fontWeight: 800,
-                  cursor: canSubmit && !submitChecking ? "pointer" : "default",
-                  opacity: submitChecking ? 0.7 : 1,
-                  transition: "all 0.25s",
-                  boxShadow: canSubmit && !submitChecking ? "0 4px 28px rgba(139,92,246,0.55)" : "none",
-                  letterSpacing: "0.3px",
-                }}
-              >
-                {submitChecking ? "בודק..." : "צרו הצעה מנצחת 🏆"}
-              </button>
-            </div>
-          )}
 
           {messages.map((msg, i) => (
             <div key={i} style={{
@@ -666,14 +674,14 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 padding: "10px 14px",
                 borderRadius: msg.role === "user" ? "18px 4px 18px 18px" : "4px 18px 18px 18px",
                 background: msg.role === "user"
-                  ? "rgba(139,92,246,0.2)"
-                  : "rgba(255,255,255,0.08)",
+                  ? `rgba(var(--purple-rgb), 0.2)`
+                  : `rgba(var(--white-overlay-rgb), 0.08)`,
                 border: msg.role === "user"
-                  ? "1px solid rgba(139,92,246,0.35)"
-                  : "1px solid rgba(255,255,255,0.1)",
+                  ? `1px solid rgba(var(--purple-rgb), 0.35)`
+                  : `1px solid rgba(var(--white-overlay-rgb), 0.1)`,
                 fontSize: "14px",
                 lineHeight: 1.65,
-                color: "#e2e8f0",
+                color: "var(--text-primary)",
                 wordBreak: "break-word",
                 textAlign: "right",
               }}>
@@ -684,8 +692,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           <div ref={bottomRef} />
         </div>
 
-        {/* Landing chips — only before first quote and after guest form submitted */}
-        {!hasQuote && !(isGuest && !guestInfo) && (
+        {/* Landing chips — only before first quote and after guest onboarding done */}
+        {!hasQuote && !(isGuest && guestStep < 5) && (
           <div style={{ padding: "0 16px 10px", display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-start" }}>
             <button
               onClick={() => sendMessage("צור לי הצעת מחיר חדשה", quote)}
@@ -705,42 +713,33 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         {/* Input bar */}
         <div style={{
           padding: "10px 14px",
-          borderTop: "1px solid rgba(139,92,246,0.2)",
-          background: "rgba(0,0,0,0.3)",
+          borderTop: `1px solid rgba(var(--purple-rgb), 0.2)`,
+          background: `rgba(var(--black-overlay-rgb), 0.3)`,
           backdropFilter: "blur(8px)",
           position: "relative",
-          opacity: isGuest && !guestInfo ? 0.28 : 1,
-          transition: "opacity 0.3s",
         }}>
-          {/* Click blocker: shows alert when guest hasn't submitted form yet */}
-          {isGuest && !guestInfo && (
-            <div
-              onClick={() => alert("כדי שניצור לך הצעת מחיר פצצה, מלא לנו את הפרטים האלו")}
-              style={{ position: "absolute", inset: 0, zIndex: 10, cursor: "pointer" }}
-            />
-          )}
           <div style={{
             display: "flex",
             alignItems: "flex-end",
             gap: 8,
-            background: "rgba(255,255,255,0.06)",
-            border: "1px solid rgba(139,92,246,0.25)",
+            background: `rgba(var(--white-overlay-rgb), 0.06)`,
+            border: `1px solid rgba(var(--purple-rgb), 0.25)`,
             borderRadius: 16,
             padding: "8px 10px",
           }}>
             {/* Mic — LEFT in JSX = RIGHT in RTL */}
             <button
               onClick={handleVoice}
-              disabled={isLoading || (!!isGuest && !guestInfo)}
+              disabled={isLoading || submitChecking}
               title={isListening ? "עצור הקלטה" : "הקלד בקול"}
               style={{
                 flexShrink: 0,
                 width: 34,
                 height: 34,
                 borderRadius: "50%",
-                border: isListening ? "1px solid rgba(239,68,68,0.6)" : "1px solid rgba(139,92,246,0.3)",
-                background: isListening ? "rgba(239,68,68,0.15)" : "rgba(139,92,246,0.1)",
-                color: isListening ? "#f87171" : "#a78bfa",
+                border: isListening ? "1px solid rgba(239,68,68,0.6)" : `1px solid rgba(var(--purple-rgb), 0.3)`,
+                background: isListening ? "rgba(239,68,68,0.15)" : `rgba(var(--purple-rgb), 0.1)`,
+                color: isListening ? "#f87171" : "var(--text-accent)",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -765,7 +764,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 background: "transparent",
                 border: "none",
                 outline: "none",
-                color: "#e2e8f0",
+                color: "var(--text-primary)",
                 fontSize: "16px",
                 lineHeight: 1.5,
                 resize: "none",
@@ -786,18 +785,18 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             <button
               onClick={handleSend}
               onMouseDown={(e) => e.preventDefault()}
-              disabled={isLoading || !input.trim() || (!!isGuest && !guestInfo)}
+              disabled={isLoading || submitChecking || !input.trim()}
               style={{
                 flexShrink: 0,
                 width: 34,
                 height: 34,
                 borderRadius: "50%",
                 border: "none",
-                background: input.trim() && !isLoading && !(isGuest && !guestInfo)
+                background: input.trim() && !isLoading && !submitChecking
                   ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
-                  : "rgba(139,92,246,0.2)",
+                  : `rgba(var(--purple-rgb), 0.2)`,
                 color: "#fff",
-                cursor: input.trim() && !isLoading && !(isGuest && !guestInfo) ? "pointer" : "default",
+                cursor: input.trim() && !isLoading && !submitChecking ? "pointer" : "default",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -819,7 +818,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       {emailExistsAlert && (
         <div dir="rtl" style={{
           position: "fixed", inset: 0, zIndex: 60,
-          background: "rgba(7,7,26,0.85)",
+          background: `rgba(var(--bg-base), 0.85)`,
           backdropFilter: "blur(12px)",
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
@@ -828,22 +827,22 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             @keyframes email-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
           `}</style>
           <div style={{
-            background: "linear-gradient(160deg, rgba(109,40,217,0.18) 0%, rgba(8,6,24,0.98) 100%)",
-            border: "1px solid rgba(139,92,246,0.5)",
+            background: `linear-gradient(160deg, rgba(var(--card-bg-start-rgb), 0.18) 0%, rgba(var(--card-bg-end-rgb), 0.98) 100%)`,
+            border: `1px solid rgba(var(--purple-rgb), 0.5)`,
             borderRadius: 22, padding: "36px 28px 28px",
             maxWidth: 360, width: "90%", textAlign: "center",
-            boxShadow: "0 0 60px rgba(139,92,246,0.25), 0 16px 48px rgba(0,0,0,0.7)",
+            boxShadow: `0 0 60px rgba(var(--purple-rgb), 0.25), 0 16px 48px rgba(var(--black-overlay-rgb), 0.7)`,
           }}>
             <div style={{ fontSize: 42, marginBottom: 14, animation: "email-pulse 2s ease-in-out infinite" }}>✉️</div>
-            <div style={{ fontSize: "19px", fontWeight: 800, color: "#e9e4ff", marginBottom: 10, lineHeight: 1.4 }}>
+            <div style={{ fontSize: "19px", fontWeight: 800, color: "var(--text-heading)", marginBottom: 10, lineHeight: 1.4 }}>
               המייל כבר קיים במערכת
             </div>
-            <div style={{ fontSize: "14px", color: "rgba(196,181,253,0.7)", lineHeight: 1.65, marginBottom: 24 }}>
+            <div style={{ fontSize: "14px", color: `rgba(var(--purple-light-rgb), 0.7)`, lineHeight: 1.65, marginBottom: 24 }}>
               אנחנו רואים שהמייל הזה כבר קיים אצלנו —<br />
               מעבירים אותך לעמוד התחברות
             </div>
             {/* Progress bar */}
-            <div dir="ltr" style={{ background: "rgba(139,92,246,0.15)", borderRadius: 4, height: 5, overflow: "hidden" }}>
+            <div dir="ltr" style={{ background: `rgba(var(--purple-rgb), 0.15)`, borderRadius: 4, height: 5, overflow: "hidden" }}>
               <div style={{
                 height: "100%",
                 background: "linear-gradient(90deg, #7c3aed, #a855f7, #ec4899)",
@@ -859,7 +858,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       {approveState === "success" && (
         <div dir="rtl" style={{
           position: "fixed", inset: 0, zIndex: 50,
-          background: "rgba(7,7,26,0.88)",
+          background: `rgba(var(--bg-base), 0.88)`,
           backdropFilter: "blur(10px)",
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
@@ -875,39 +874,39 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             @keyframes fade-cycle-3 { 0%,66%{opacity:0} 71%,94%{opacity:1} 100%{opacity:0} }
           `}</style>
           <div style={{
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(139,92,246,0.35)",
+            background: `rgba(var(--white-overlay-rgb), 0.05)`,
+            border: `1px solid rgba(var(--purple-rgb), 0.35)`,
             borderRadius: 20, padding: "32px 28px",
             maxWidth: 380, width: "90%", textAlign: "center",
           }}>
             {/* Header */}
             <div style={{ fontSize: 38, marginBottom: 6, animation: "float-sparkle 2.5s ease-in-out infinite" }}>✨</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: "#c4b5fd", marginBottom: 18 }}>ההצעה נשמרה!</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text-secondary)", marginBottom: 18 }}>ההצעה נשמרה!</div>
 
             {/* Creating animation */}
             <div style={{ marginBottom: 22 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
                 <div style={{
                   width: 20, height: 20, borderRadius: "50%",
-                  border: "2.5px solid rgba(139,92,246,0.25)",
-                  borderTopColor: "#a78bfa",
+                  border: `2.5px solid rgba(var(--purple-rgb), 0.25)`,
+                  borderTopColor: "var(--text-accent)",
                   animation: "spin-ring 0.85s linear infinite",
                   flexShrink: 0,
                 }} />
                 <div style={{ position: "relative", height: 20, minWidth: 170 }}>
-                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "#c4b5fd", animation: "fade-cycle-1 9s linear infinite" }}>
+                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "var(--text-secondary)", animation: "fade-cycle-1 9s linear infinite" }}>
                     מנתח את הנתונים...
                   </span>
-                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "#c4b5fd", animation: "fade-cycle-2 9s linear infinite" }}>
+                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "var(--text-secondary)", animation: "fade-cycle-2 9s linear infinite" }}>
                     בונה את ההצעה שלך...
                   </span>
-                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "#c4b5fd", animation: "fade-cycle-3 9s linear infinite" }}>
+                  <span style={{ position: "absolute", right: 0, left: 0, fontSize: 13, color: "var(--text-secondary)", animation: "fade-cycle-3 9s linear infinite" }}>
                     מכין לייצוא...
                   </span>
                 </div>
               </div>
               {/* Progress bar */}
-              <div dir="ltr" style={{ background: "rgba(139,92,246,0.15)", borderRadius: 4, height: 5, overflow: "hidden" }}>
+              <div dir="ltr" style={{ background: `rgba(var(--purple-rgb), 0.15)`, borderRadius: 4, height: 5, overflow: "hidden" }}>
                 <div style={{
                   height: "100%",
                   background: "linear-gradient(90deg, #7c3aed, #a855f7, #ec4899)",
@@ -920,10 +919,10 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             {/* Review section */}
             {!reviewSubmitted ? (
               <>
-                <div style={{ fontSize: 13, color: "rgba(196,181,253,0.6)", marginBottom: 10 }}>
+                <div style={{ fontSize: 13, color: `rgba(var(--purple-light-rgb), 0.6)`, marginBottom: 10 }}>
                   בינתיים — ספר לנו כיצד היה התהליך
                 </div>
-                <div style={{ fontSize: 14, color: "#c4b5fd", marginBottom: 12, fontWeight: 600 }}>
+                <div style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 12, fontWeight: 600 }}>
                   איך היה תהליך יצירת ההצעה?
                 </div>
                 {/* Stars with emoji hints */}
@@ -936,7 +935,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                       style={{
                         fontSize: 26,
                         cursor: "pointer",
-                        color: s <= reviewStars ? "#fbbf24" : "rgba(196,181,253,0.25)",
+                        color: s <= reviewStars ? "#fbbf24" : `rgba(var(--purple-light-rgb), 0.25)`,
                         transition: "color 0.15s, transform 0.1s",
                         transform: s <= reviewStars ? "scale(1.15)" : "scale(1)",
                         display: "inline-block",
@@ -953,8 +952,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   rows={2}
                   style={{
                     width: "100%", borderRadius: 8, padding: "8px 10px",
-                    background: "rgba(255,255,255,0.07)", border: "1px solid rgba(139,92,246,0.3)",
-                    color: "#e2e8f0", fontSize: 13, resize: "none", direction: "rtl",
+                    background: `rgba(var(--white-overlay-rgb), 0.07)`, border: `1px solid rgba(var(--purple-rgb), 0.3)`,
+                    color: "var(--text-primary)", fontSize: 13, resize: "none", direction: "rtl",
                     fontFamily: "inherit", outline: "none", boxSizing: "border-box",
                     marginBottom: 12,
                   }}
@@ -966,7 +965,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                       flex: 1, padding: "10px 0", borderRadius: 50, border: "none",
                       background: reviewStars > 0
                         ? "linear-gradient(135deg, #7c3aed, #a855f7)"
-                        : "rgba(139,92,246,0.2)",
+                        : `rgba(var(--purple-rgb), 0.2)`,
                       color: "#fff", fontSize: 14, fontWeight: 700,
                       cursor: reviewStars > 0 ? "pointer" : "default",
                     }}
@@ -977,9 +976,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                     onClick={() => setReviewSubmitted(true)}
                     style={{
                       flex: 1, padding: "10px 0", borderRadius: 50,
-                      border: "1px solid rgba(139,92,246,0.3)",
+                      border: `1px solid rgba(var(--purple-rgb), 0.3)`,
                       background: "transparent",
-                      color: "rgba(196,181,253,0.6)", fontSize: 14, cursor: "pointer",
+                      color: `rgba(var(--purple-light-rgb), 0.6)`, fontSize: 14, cursor: "pointer",
                     }}
                   >
                     דלג
@@ -987,7 +986,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                 </div>
               </>
             ) : (
-              <div style={{ fontSize: 22, color: "#c4b5fd" }}>תודה! 🙏</div>
+              <div style={{ fontSize: 22, color: "var(--text-secondary)" }}>תודה! 🙏</div>
             )}
           </div>
         </div>
@@ -1025,6 +1024,10 @@ function QuotePanel({
   onBackToChat,
   primaryColor,
   accentColor,
+  isGuest,
+  termsAccepted,
+  onTermsChange,
+  onLogoUpload,
 }: {
   quote: Partial<Quote>;
   companyName: string;
@@ -1042,6 +1045,10 @@ function QuotePanel({
   onUpdateAddress: (address: string) => void;
   onBackToChat?: () => void;
   approveLabel?: string;
+  isGuest?: boolean;
+  termsAccepted?: boolean;
+  onTermsChange?: (v: boolean) => void;
+  onLogoUpload?: (url: string) => void;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -1065,6 +1072,30 @@ function QuotePanel({
 
   const [editingAddress, setEditingAddress] = useState(false);
   const [addressDraft, setAddressDraft] = useState("");
+
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !onLogoUpload) return;
+    setLogoUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload-logo", { method: "POST", body: fd });
+      const data = await res.json() as { ok: boolean; url?: string };
+      if (data.ok && data.url) {
+        onLogoUpload(data.url);
+        console.log("[logo] uploaded:", data.url);
+      }
+    } catch (err) {
+      console.error("[logo] upload failed:", err);
+    } finally {
+      setLogoUploading(false);
+    }
+  };
 
   const startEditTitle = () => { setTitleDraft(quote.title ?? ""); setEditingTitle(true); };
   const commitTitle = () => { setEditingTitle(false); if (titleDraft.trim()) onTitleChange(titleDraft.trim()); };
@@ -1125,24 +1156,60 @@ function QuotePanel({
           borderRadius: 10,
           border: "1px solid #e5e7eb",
         }}>
-          {companyLogo ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={companyLogo}
-              alt={companyName}
-              style={{ width: 48, height: 48, borderRadius: 8, objectFit: "contain", flexShrink: 0, background: "#fff", border: "1px solid #e5e7eb" }}
-            />
-          ) : (
-            <div style={{
-              width: 48, height: 48, borderRadius: 8, background: primaryLight,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "20px", fontWeight: 800, color: primary, flexShrink: 0,
-            }}>
-              {companyName.charAt(0)}
-            </div>
-          )}
-          <div>
+          {/* Logo area — clickable for guests */}
+          <div
+            onClick={() => isGuest && logoInputRef.current?.click()}
+            title={isGuest ? (companyLogo ? "לחץ להחלפת לוגו" : "לחץ להוספת לוגו") : undefined}
+            style={{
+              flexShrink: 0, position: "relative",
+              cursor: isGuest ? "pointer" : "default",
+            }}
+          >
+            {companyLogo ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={companyLogo}
+                alt={companyName}
+                style={{ width: 48, height: 48, borderRadius: 8, objectFit: "contain", background: "#fff", border: "1px solid #e5e7eb", opacity: logoUploading ? 0.5 : 1 }}
+              />
+            ) : (
+              <div style={{
+                width: 48, height: 48, borderRadius: 8,
+                background: isGuest ? "#f3f4f6" : primaryLight,
+                border: isGuest ? "1.5px dashed #a78bfa" : "none",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: isGuest ? "20px" : "20px", fontWeight: 800,
+                color: isGuest ? "#a78bfa" : primary,
+                opacity: logoUploading ? 0.5 : 1,
+              }}>
+                {isGuest ? (logoUploading ? "⏳" : "🖼") : companyName.charAt(0)}
+              </div>
+            )}
+            {isGuest && !logoUploading && (
+              <div style={{
+                position: "absolute", bottom: -4, right: -4,
+                width: 16, height: 16, borderRadius: "50%",
+                background: primary, color: "#fff",
+                fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center",
+                border: "1.5px solid #fff",
+              }}>+</div>
+            )}
+          </div>
+          {/* Hidden image file input */}
+          <input
+            ref={logoInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={handleLogoFile}
+          />
+          <div style={{ flex: 1 }}>
             <div style={{ fontSize: "15px", fontWeight: 700, color: "#111827" }}>{companyName}</div>
+            {isGuest && !companyLogo && (
+              <div style={{ fontSize: "11px", color: "#a78bfa", marginTop: 2, cursor: "pointer" }} onClick={() => logoInputRef.current?.click()}>
+                הוסף לוגו לעסק ←
+              </div>
+            )}
             {quote.date && (
               <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: 2 }}>
                 {new Date(quote.date).toLocaleDateString("he-IL")}
@@ -1429,6 +1496,10 @@ function QuotePanel({
            : !hasClientName ? "חסר שם לקוח"
            : "חסרה כותרת להצעה")
           : "נעביר אותך לעמוד תצוגה ושיתוף ההצעה";
+
+        const guestNeedsTerms = isGuest && canApprove && !termsAccepted;
+        const buttonDisabled  = isBusy || (isGuest && canApprove && !termsAccepted);
+
         return (
           <div style={{
             position: "sticky",
@@ -1440,13 +1511,40 @@ function QuotePanel({
             alignItems: "center",
             gap: 6,
           }}>
+            {/* Terms checkbox — guests only, shown when button becomes active */}
+            {isGuest && canApprove && (
+              <label style={{
+                display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                fontSize: "12px", color: "#4b5563", lineHeight: 1.5, direction: "rtl",
+                marginBottom: 4, width: "100%",
+              }}>
+                <input
+                  type="checkbox"
+                  checked={termsAccepted ?? false}
+                  onChange={(e) => onTermsChange?.(e.target.checked)}
+                  style={{ marginTop: 2, accentColor: primary, flexShrink: 0, width: 15, height: 15, cursor: "pointer" }}
+                />
+                <span>
+                  מאשר/ת את{" "}
+                  <a
+                    href="https://tik-tok.co.il/terms-privacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ color: primary, textDecoration: "underline" }}
+                  >
+                    תנאי השימוש ומדיניות הפרטיות
+                  </a>
+                </span>
+              </label>
+            )}
             <button
               onClick={() => {
-                if (isBusy) return;
+                if (isBusy || guestNeedsTerms) return;
                 if (canApprove) onApprove();
                 else onBackToChat?.();
               }}
-              disabled={isBusy}
+              disabled={buttonDisabled}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1460,9 +1558,9 @@ function QuotePanel({
                 color: "#fff",
                 fontSize: "17px",
                 fontWeight: 700,
-                cursor: !isBusy ? "pointer" : "default",
-                boxShadow: canApprove ? "0 4px 24px rgba(139,92,246,0.45)" : "none",
-                opacity: !canApprove && approveState === "idle" ? 0.4 : 1,
+                cursor: !buttonDisabled ? "pointer" : "default",
+                boxShadow: canApprove && !guestNeedsTerms ? `0 4px 24px rgba(124,58,237,0.45)` : "none",
+                opacity: (!canApprove || guestNeedsTerms) && approveState === "idle" ? 0.4 : 1,
                 transition: "transform 0.15s, box-shadow 0.15s, background 0.3s, opacity 0.2s",
                 transform: approveState === "loading" ? "scale(0.97)" : "scale(1)",
                 letterSpacing: 0.3,
@@ -1514,9 +1612,9 @@ function mergeQuote(current: Partial<Quote>, update: PartialQuote): Partial<Quot
 const chipStyle: React.CSSProperties = {
   padding: "8px 18px",
   borderRadius: 20,
-  border: "1px solid rgba(139,92,246,0.35)",
-  background: "rgba(139,92,246,0.12)",
-  color: "#c4b5fd",
+  border: `1px solid rgba(var(--purple-rgb), 0.35)`,
+  background: `rgba(var(--purple-rgb), 0.12)`,
+  color: "var(--text-secondary)",
   fontSize: "13px",
   fontWeight: 600,
   cursor: "pointer",
