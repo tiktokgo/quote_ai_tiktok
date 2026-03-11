@@ -58,8 +58,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   // ── Guest state ───────────────────────────────────────────────────────────
   const [guestInfo, setGuestInfo] = useState<{ company_name: string; address: string; phone: string; email: string } | null>(null);
   const [guestReady, setGuestReady] = useState(false);
-  // step: 0=work desc, 1=AI building, 2=ask company, 3=ask phone, 4=ask address, 5=ask email, 6=checking, done=guestReady
-  const [guestStep, setGuestStep] = useState<0|1|2|3|4|5|6>(0);
+  // step: 0=waiting for work description, 1=AI building draft
+  const [guestStep, setGuestStep] = useState<0|1>(0);
   const guestDraftRef = useRef({ company_name: "", address: "", phone: "" });
   const [submitChecking, setSubmitChecking] = useState(false);
   const [emailExistsAlert, setEmailExistsAlert] = useState(false);
@@ -75,6 +75,11 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         guestInfo.phone   && `טלפון: ${guestInfo.phone}`,
         guestInfo.email   && `אימייל: ${guestInfo.email}`,
       ].filter(Boolean).join(" | ") || undefined,
+      company_logo: guestLogoUrl,
+    } : guestReady ? {
+      // Draft phase: guest is chatting freely, account info collected at approve time
+      company_name: "העסק שלך",
+      industry: quote.industry ?? "כללי",
       company_logo: guestLogoUrl,
     } : undefined);
 
@@ -210,7 +215,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
 
     if (guestStep === 0) {
-      // Step 0: user described work → call AI to build draft, then ask company name
+      // User described work → call AI to build draft, then unlock full chat
       setGuestStep(1);
       setMessages((prev) => [...prev, { role: "assistant", content: "", loading: true }]);
       setIsLoading(true);
@@ -259,54 +264,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       } finally {
         setIsLoading(false);
       }
-      setMessages((prev) => [...prev.filter((m) => !m.loading), { role: "assistant", content: "מה שם העסק שלך?" }]);
-      setGuestStep(2);
-
-    } else if (guestStep === 2) {
-      guestDraftRef.current.company_name = trimmed;
-      setGuestInfo({ company_name: trimmed, phone: "", address: "", email: "" });
-      setGuestStep(3);
-      setMessages((prev) => [...prev, { role: "assistant", content: "מה מספר הטלפון של העסק?" }]);
-
-    } else if (guestStep === 3) {
-      guestDraftRef.current.phone = trimmed;
-      setGuestInfo((prev) => prev ? { ...prev, phone: trimmed } : prev);
-      setGuestStep(4);
-      setMessages((prev) => [...prev, { role: "assistant", content: "ומה הכתובת של העסק? (תופיע בכותרת ההצעה)" }]);
-
-    } else if (guestStep === 4) {
-      guestDraftRef.current.address = trimmed;
-      setGuestInfo((prev) => prev ? { ...prev, address: trimmed } : prev);
-      setGuestStep(5);
-      setMessages((prev) => [...prev, { role: "assistant", content: "ולסיום — מה כתובת האימייל שלך?" }]);
-
-    } else if (guestStep === 5) {
-      const email = trimmed;
-      setGuestStep(6);
-      setSubmitChecking(true);
-      setMessages((prev) => [...prev, { role: "assistant", content: "", loading: true }]);
-      try {
-        const res = await fetch("/api/check-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
-        });
-        const data = await res.json() as { exists: boolean };
-        if (data.exists) {
-          setSubmitChecking(false);
-          setEmailExistsAlert(true);
-          setMessages((prev) => prev.filter((m) => !m.loading));
-          setTimeout(() => { window.location.href = "https://app.tik-tok.co.il"; }, 3200);
-          return;
-        }
-      } catch { /* on error, proceed as new user */ }
-      setSubmitChecking(false);
       setMessages((prev) => prev.filter((m) => !m.loading));
-      setGuestInfo((prev) => prev
-        ? { ...prev, email }
-        : { company_name: guestDraftRef.current.company_name, address: guestDraftRef.current.address, phone: guestDraftRef.current.phone, email }
-      );
-      setGuestReady(true);
+      setGuestReady(true); // unlock full AI chat
     }
   }, [guestStep, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -419,6 +378,10 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
   const [approveState, setApproveState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingApproveRef = useRef<{ company_name: string; address: string; phone: string; email: string } | null>(null);
+  const [preApproveVisible, setPreApproveVisible] = useState(false);
+  const [preApproveDraft, setPreApproveDraft] = useState({ company_name: "", address: "", phone: "", email: "" });
+  const [preApproveChecking, setPreApproveChecking] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [quoteId, setQuoteId] = useState<string | undefined>();
   const [reviewStars, setReviewStars] = useState(0);
@@ -438,17 +401,24 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   useEffect(() => () => { if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current); }, []);
 
   const handleApprove = useCallback(async () => {
+    // Guests who haven't filled in account details yet → show pre-approve form first
+    const effectiveGuestInfo = guestInfo ?? pendingApproveRef.current;
+    if (isGuest && !effectiveGuestInfo) {
+      setPreApproveVisible(true);
+      return;
+    }
+
     setApproveState("loading");
     try {
       let res: Response;
       const quoteWithTax = { ...quote, has_tax: quote.has_tax ?? false };
-      if (isGuest && guestInfo) {
-        // Guard: re-check email before submitting — catches cases where form-stage check was skipped or EMAIL_CHECK_URL not configured
+      if (isGuest && effectiveGuestInfo) {
+        // Guard: re-check email before submitting
         try {
           const emailCheck = await fetch("/api/check-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: guestInfo.email }),
+            body: JSON.stringify({ email: effectiveGuestInfo.email }),
           });
           const emailData = await emailCheck.json() as { exists: boolean };
           if (emailData.exists) {
@@ -463,11 +433,11 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            company_name:  guestInfo.company_name,
-            email:         guestInfo.email,
+            company_name:  effectiveGuestInfo.company_name,
+            email:         effectiveGuestInfo.email,
             industry:      quote.industry ?? "כללי",
-            address:       guestInfo.address,
-            company_phone: guestInfo.phone,
+            address:       effectiveGuestInfo.address,
+            company_phone: effectiveGuestInfo.phone,
             logo_url:      guestLogoUrl,
             quote:         quoteWithTax,
           }),
@@ -525,7 +495,36 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       setApproveState("error");
       setTimeout(() => setApproveState("idle"), 3000);
     }
-  }, [aiContext, isGuest, guestInfo, quote, guestLogoUrl]);
+  }, [aiContext, isGuest, guestInfo, quote, guestLogoUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Pre-approve form submit ────────────────────────────────────────────────
+  const handlePreApproveSubmit = useCallback(async () => {
+    const { company_name, email, address, phone } = preApproveDraft;
+    if (!company_name.trim() || !email.trim()) return;
+    setPreApproveChecking(true);
+    try {
+      const emailCheck = await fetch("/api/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const emailData = await emailCheck.json() as { exists: boolean };
+      if (emailData.exists) {
+        setPreApproveChecking(false);
+        setPreApproveVisible(false);
+        setEmailExistsAlert(true);
+        setTimeout(() => { window.location.href = "https://app.tik-tok.co.il"; }, 3200);
+        return;
+      }
+    } catch { /* on error, proceed */ }
+    const info = { company_name: company_name.trim(), email: email.trim(), address: address.trim(), phone: phone.trim() };
+    pendingApproveRef.current = info;
+    setGuestInfo(info);
+    setPreApproveChecking(false);
+    setPreApproveVisible(false);
+    // Call handleApprove — it will pick up info from pendingApproveRef since state update is async
+    setTimeout(() => handleApprove(), 0);
+  }, [preApproveDraft, handleApprove]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
@@ -733,7 +732,10 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   {msg.content}
                 </div>
               ) : (
-                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "90%" }}>
+                <div style={{
+                  display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "90%",
+                  background: "#f5f0ff", borderRadius: 18, padding: "10px 14px",
+                }}>
                   {/* In RTL flex, first child = right side → icon appears to the right of text */}
                   <div style={{
                     flexShrink: 0, width: 28, height: 28, borderRadius: "50%",
@@ -877,6 +879,132 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} />
+
+      {/* ── Pre-approve form overlay ── */}
+      {preApproveVisible && (
+        <div dir="rtl" style={{
+          position: "fixed", inset: 0, zIndex: 55,
+          background: "rgba(0,0,0,0.45)",
+          backdropFilter: "blur(6px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#ffffff", borderRadius: 20, padding: "28px 24px",
+            maxWidth: 380, width: "92%",
+            boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+          }}>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: "#1a1a2e", marginBottom: 6, textAlign: "right" }}>
+              פתיחת חשבון חינמי
+            </div>
+            <div style={{ fontSize: "13px", color: "#6d28d9", marginBottom: 20, textAlign: "right" }}>
+              ממלאים פרטים ושולחים — ההצעה נשמרת ישר אצלכם
+            </div>
+
+            {/* Company name */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: 4, textAlign: "right" }}>
+                שם העסק *
+              </label>
+              <input
+                type="text"
+                value={preApproveDraft.company_name}
+                onChange={(e) => setPreApproveDraft((p) => ({ ...p, company_name: e.target.value }))}
+                placeholder="למשל: אינסטלציה ישראל"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db",
+                  fontSize: "15px", direction: "rtl", fontFamily: "inherit", outline: "none",
+                  boxSizing: "border-box", color: "#1a1a2e",
+                }}
+              />
+            </div>
+
+            {/* Email */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: 4, textAlign: "right" }}>
+                אימייל *
+              </label>
+              <input
+                type="email"
+                value={preApproveDraft.email}
+                onChange={(e) => setPreApproveDraft((p) => ({ ...p, email: e.target.value }))}
+                placeholder="you@example.com"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db",
+                  fontSize: "15px", direction: "ltr", fontFamily: "inherit", outline: "none",
+                  boxSizing: "border-box", color: "#1a1a2e", textAlign: "left",
+                }}
+              />
+            </div>
+
+            {/* Phone */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: 4, textAlign: "right" }}>
+                טלפון
+              </label>
+              <input
+                type="tel"
+                value={preApproveDraft.phone}
+                onChange={(e) => setPreApproveDraft((p) => ({ ...p, phone: e.target.value }))}
+                placeholder="050-0000000"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db",
+                  fontSize: "15px", direction: "ltr", fontFamily: "inherit", outline: "none",
+                  boxSizing: "border-box", color: "#1a1a2e", textAlign: "left",
+                }}
+              />
+            </div>
+
+            {/* Address */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: 4, textAlign: "right" }}>
+                כתובת
+              </label>
+              <input
+                type="text"
+                value={preApproveDraft.address}
+                onChange={(e) => setPreApproveDraft((p) => ({ ...p, address: e.target.value }))}
+                placeholder="רחוב הרצל 1, תל אביב"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db",
+                  fontSize: "15px", direction: "rtl", fontFamily: "inherit", outline: "none",
+                  boxSizing: "border-box", color: "#1a1a2e",
+                }}
+              />
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={handlePreApproveSubmit}
+                disabled={preApproveChecking || !preApproveDraft.company_name.trim() || !preApproveDraft.email.trim()}
+                style={{
+                  flex: 1, padding: "12px 0", borderRadius: 50, border: "none",
+                  background: preApproveChecking || !preApproveDraft.company_name.trim() || !preApproveDraft.email.trim()
+                    ? "#e5e7eb" : "linear-gradient(135deg, #7c3aed, #a855f7)",
+                  color: preApproveChecking || !preApproveDraft.company_name.trim() || !preApproveDraft.email.trim()
+                    ? "#9ca3af" : "#fff",
+                  fontSize: "15px", fontWeight: 700,
+                  cursor: preApproveChecking || !preApproveDraft.company_name.trim() || !preApproveDraft.email.trim() ? "default" : "pointer",
+                  transition: "background 0.2s",
+                }}
+              >
+                {preApproveChecking ? "בודק..." : "שמור ושלח הצעה"}
+              </button>
+              <button
+                onClick={() => setPreApproveVisible(false)}
+                disabled={preApproveChecking}
+                style={{
+                  padding: "12px 18px", borderRadius: 50,
+                  border: "1px solid #e5e7eb", background: "transparent",
+                  color: "#9ca3af", fontSize: "14px", cursor: "pointer",
+                }}
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Email-exists alert overlay ── */}
       {emailExistsAlert && (
