@@ -58,7 +58,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   // ── Guest state ───────────────────────────────────────────────────────────
   const [guestInfo, setGuestInfo] = useState<{ company_name: string; address: string; phone: string; email: string } | null>(null);
   const [guestReady, setGuestReady] = useState(false);
-  const guestDraftRef = useRef({ company_name: "", address: "", phone: "" });
+
   const [submitChecking, setSubmitChecking] = useState(false);
   const [emailExistsAlert, setEmailExistsAlert] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -209,57 +209,58 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     const trimmed = answer.trim();
     if (!trimmed) return;
 
-    {
-      setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
-      setMessages((prev) => [...prev, { role: "assistant", content: "", loading: true }]);
-      setIsLoading(true);
-      try {
-        const tempCtx: AIContext = { company_name: "העסק שלך", industry: "" };
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: [{ role: "user", content: trimmed }], aiContext: tempCtx, currentQuote: {}, token }),
-        });
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let assistantText = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          for (const line of chunk.split("\n")) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const event = JSON.parse(line.slice(6)) as { type: string; content?: string; quote?: PartialQuote };
-              if (event.type === "text" && event.content) {
-                assistantText += event.content + " ";
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: assistantText.trim(), loading: false };
-                  return updated;
-                });
-              } else if (event.type === "quote_update" && event.quote) {
-                setQuote((prev) => mergeQuote(prev, event.quote!));
-                setMobileView("preview");
-              }
-            } catch { /* ignore */ }
-          }
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: trimmed },
+      { role: "assistant", content: "", loading: true },
+    ]);
+    setIsLoading(true);
+    try {
+      const tempCtx: AIContext = { company_name: "העסק שלך", industry: "" };
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: [{ role: "user", content: trimmed }], aiContext: tempCtx, currentQuote: {}, token }),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantText = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as { type: string; content?: string; quote?: PartialQuote };
+            if (event.type === "text" && event.content) {
+              assistantText += event.content + " ";
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: assistantText.trim(), loading: false };
+                return updated;
+              });
+            } else if (event.type === "quote_update" && event.quote) {
+              setQuote((prev) => mergeQuote(prev, event.quote!));
+              setMobileView("preview");
+            }
+          } catch { /* ignore */ }
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setMessages((prev) => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: `שגיאה: ${msg}`, loading: false };
-          return updated;
-        });
-      } finally {
-        setIsLoading(false);
       }
-      setGuestReady(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: `שגיאה: ${msg}`, loading: false };
+        return updated;
+      });
+    } finally {
+      setIsLoading(false);
     }
+    setGuestReady(true);
   }, [token, quote, sendMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = useCallback(() => {
@@ -393,6 +394,14 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
 
   useEffect(() => () => { if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current); }, []);
 
+  const performRedirect = useCallback((url: string) => {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: "quote_redirect", url }, "*");
+    } else {
+      window.location.href = url;
+    }
+  }, []);
+
   const handleApprove = useCallback(async () => {
     // Guests who haven't filled in account details yet → show pre-approve form first
     const effectiveGuestInfo = guestInfo ?? pendingApproveRef.current;
@@ -456,28 +465,16 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
         redirectTimerRef.current = setTimeout(() => {
           redirectTimerRef.current = null;
-          const inIframe = window.parent !== window;
-          console.log("[redirect timer] fired — isGuest:", isGuest, "guestRedirectUrl:", guestRedirectUrl, "inIframe:", inIframe);
           if (isGuest) {
             if (guestRedirectUrl) {
-              if (inIframe) {
-                window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
-              } else {
-                window.location.href = guestRedirectUrl;
-              }
+              performRedirect(guestRedirectUrl);
             } else {
               setApproveState("idle"); // no redirect URL — release overlay so user isn't stuck
             }
           } else {
-            // Existing user: redirect using NEXT_PUBLIC_REDIRECT_BASE + quote_id
             const base = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
             if (base && id) {
-              const url = base + id;
-              if (inIframe) {
-                window.parent.postMessage({ type: "quote_redirect", url }, "*");
-              } else {
-                window.location.href = url;
-              }
+              performRedirect(base + id);
             } else {
               setApproveState("idle");
             }
@@ -491,7 +488,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       setApproveState("error");
       setTimeout(() => setApproveState("idle"), 3000);
     }
-  }, [aiContext, isGuest, guestInfo, quote, guestLogoUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [aiContext, isGuest, guestInfo, quote, guestLogoUrl, performRedirect]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Pre-approve form submit ────────────────────────────────────────────────
   const handlePreApproveSubmit = useCallback(async () => {
