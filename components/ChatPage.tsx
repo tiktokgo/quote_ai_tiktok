@@ -63,6 +63,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [emailExistsAlert, setEmailExistsAlert] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [guestLogoUrl, setGuestLogoUrl] = useState<string | undefined>();
+  const [preApproveDraft, setPreApproveDraft] = useState({ company_name: "", address: "", phone: "", email: "" });
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
@@ -375,7 +376,6 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingApproveRef = useRef<{ company_name: string; address: string; phone: string; email: string } | null>(null);
   const [preApproveVisible, setPreApproveVisible] = useState(false);
-  const [preApproveDraft, setPreApproveDraft] = useState({ company_name: "", address: "", phone: "", email: "" });
   const [preApproveChecking, setPreApproveChecking] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [quoteId, setQuoteId] = useState<string | undefined>();
