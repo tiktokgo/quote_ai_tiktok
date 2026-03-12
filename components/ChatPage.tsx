@@ -103,7 +103,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [isListening, setIsListening] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: "instant" });
   }, [messages]);
 
   // Guest: show first onboarding question on mount
@@ -221,7 +221,13 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [{ role: "user", content: trimmed }], aiContext: tempCtx, currentQuote: {}, token }),
+        body: JSON.stringify({
+          messages: [
+            { role: "assistant", content: "שלום! ספר לי על העבודה ואבנה הצעה." },
+            { role: "user", content: trimmed },
+          ],
+          aiContext: tempCtx, currentQuote: {}, token,
+        }),
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
       const reader = res.body.getReader();
