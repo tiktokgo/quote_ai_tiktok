@@ -477,9 +477,12 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
           const inIframe = window.parent !== window;
           console.log("[redirect timer] fired — isGuest:", isGuest, "guestRedirectUrl:", guestRedirectUrl, "inIframe:", inIframe);
           if (isGuest) {
-            // New user: always redirect directly (not in iframe)
             if (guestRedirectUrl) {
-              window.open(guestRedirectUrl, "_blank");
+              if (inIframe) {
+                window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
+              } else {
+                window.open(guestRedirectUrl, "_blank");
+              }
             } else {
               setApproveState("idle"); // no redirect URL — release overlay so user isn't stuck
             }
