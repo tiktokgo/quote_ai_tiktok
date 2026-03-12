@@ -8,6 +8,9 @@ export interface AIContext {
   company_logo?: string;
   industry: string;
   user_id?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
 }
 
 interface TokenPayload extends AIContext {
@@ -43,6 +46,9 @@ export function verifyToken(
         company_logo: payload.company_logo,
         industry:     payload.industry,
         user_id:      payload.user_id,
+        email:        payload.email,
+        phone:        payload.phone,
+        address:      payload.address,
       },
     };
   } catch (err) {

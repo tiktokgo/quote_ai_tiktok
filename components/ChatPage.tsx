@@ -39,6 +39,7 @@ interface ChatPageProps {
   aiContext?: AIContext & { user_id?: string };
   isGuest?: boolean;
   token?: string;
+  preGuestInfo?: { company_name: string; email: string; phone: string; address: string };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ function formatILS(n: number): string {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
+export default function ChatPage({ aiContext, isGuest, token, preGuestInfo }: ChatPageProps) {
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
   const [input, setInput]         = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -64,6 +65,13 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [guestLogoUrl, setGuestLogoUrl] = useState<string | undefined>();
   const [preApproveDraft, setPreApproveDraft] = useState({ company_name: "", address: "", phone: "", email: "" });
+
+  // Pre-fill guest info from token when marketing site sends pre-registered user
+  useEffect(() => {
+    if (!preGuestInfo) return;
+    setGuestInfo(preGuestInfo);
+    setPreApproveDraft(preGuestInfo);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const effectiveContext: (AIContext & { user_id?: string }) | undefined =
     aiContext ?? (guestInfo ? {
@@ -899,10 +907,10 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
           }}>
             <div style={{ fontSize: "18px", fontWeight: 700, color: "#1a1a2e", marginBottom: 6, textAlign: "right" }}>
-              פתיחת חשבון חינמי
+              הורידו את ההצעה או שלחו ישירות ללקוח
             </div>
             <div style={{ fontSize: "13px", color: "#6d28d9", marginBottom: 20, textAlign: "right" }}>
-              ממלאים פרטים ושולחים — ההצעה נשמרת ישר אצלכם
+              ממלאים פרטים ומתחילים חינם - אין צורך בכרטיס אשראי
             </div>
 
             {/* Company name */}
@@ -942,7 +950,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             </div>
 
             {/* Phone */}
-            <div style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: 20 }}>
               <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: 4, textAlign: "right" }}>
                 טלפון
               </label>
@@ -955,24 +963,6 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
                   width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db",
                   fontSize: "15px", direction: "ltr", fontFamily: "inherit", outline: "none",
                   boxSizing: "border-box", color: "#1a1a2e", textAlign: "left",
-                }}
-              />
-            </div>
-
-            {/* Address */}
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: 4, textAlign: "right" }}>
-                כתובת
-              </label>
-              <input
-                type="text"
-                value={preApproveDraft.address}
-                onChange={(e) => setPreApproveDraft((p) => ({ ...p, address: e.target.value }))}
-                placeholder="רחוב הרצל 1, תל אביב"
-                style={{
-                  width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db",
-                  fontSize: "15px", direction: "rtl", fontFamily: "inherit", outline: "none",
-                  boxSizing: "border-box", color: "#1a1a2e",
                 }}
               />
             </div>
@@ -1006,6 +996,27 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               >
                 ביטול
               </button>
+            </div>
+
+            {/* Feature list */}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #e5e7eb", textAlign: "right" }}>
+              {[
+                "הוספת מע\"מ",
+                "הוספת תמונות של פרויקטים",
+                "הוספת תאריך הגעה",
+                "הוספת הנחה",
+                "בחירה מפריטים שמורים",
+                "שיפור הצעה עם AI",
+                "חשבוניות/קבלות, מספרי הקצאה",
+                "ניהול יומן ומשימות",
+              ].map((item) => (
+                <div key={item} style={{ fontSize: "12px", color: "#6b7280", lineHeight: "1.7" }}>
+                  <span style={{ color: "#a78bfa", marginLeft: 4 }}>✓</span>{item}
+                </div>
+              ))}
+              <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 4, lineHeight: "1.7" }}>
+                ועוד המון דברים שיעזרו לכם לנהל את העסק וההצעות שלכם בטיל 🚀
+              </div>
             </div>
           </div>
         </div>

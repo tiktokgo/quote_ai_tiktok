@@ -21,6 +21,9 @@ export async function POST(req: NextRequest) {
     company_logo?: string;
     user_id?: string;
     expiresInHours?: number;
+    email?: string;
+    phone?: string;
+    address?: string;
   };
 
   try {
@@ -56,6 +59,9 @@ export async function POST(req: NextRequest) {
     company_info: body.company_info,
     company_logo: body.company_logo,
     user_id:      body.user_id,
+    email:        body.email,
+    phone:        body.phone,
+    address:      body.address,
   };
 
   const token = jwt.sign(payload, jwtSecret, { expiresIn: expiresInSeconds });
