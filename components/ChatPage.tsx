@@ -274,13 +274,15 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     const text = input.trim();
     if (!text || isLoading || submitChecking) return;
     setInput("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.focus();
+    }
     if (isGuest && !guestReady) {
       handleGuestStepAnswer(text);
     } else {
       sendMessage(text, quote);
     }
-    setTimeout(() => textareaRef.current?.focus(), 50);
   }, [input, isLoading, submitChecking, isGuest, guestInfo, quote, sendMessage, handleGuestStepAnswer]);
 
   // ── PDF: Improve quote ────────────────────────────────────────────────────
@@ -947,7 +949,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               <input
                 type="tel"
                 value={preApproveDraft.phone}
-                onChange={(e) => setPreApproveDraft((p) => ({ ...p, phone: e.target.value }))}
+                onChange={(e) => setPreApproveDraft((p) => ({ ...p, phone: e.target.value.replace(/[^\d\s\-+]/g, "") }))}
                 placeholder="050-0000000"
                 style={{
                   width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db",
@@ -1444,7 +1446,7 @@ function QuotePanel({
                   autoFocus
                   type="tel"
                   value={companyPhoneDraft}
-                  onChange={(e) => setCompanyPhoneDraft(e.target.value)}
+                  onChange={(e) => setCompanyPhoneDraft(e.target.value.replace(/[^\d\s\-+]/g, ""))}
                   onBlur={() => { onCompanyPhoneChange(companyPhoneDraft); setEditingCompanyPhone(false); }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") { onCompanyPhoneChange(companyPhoneDraft); setEditingCompanyPhone(false); }
