@@ -394,6 +394,11 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo }: Ch
   const [preApproveVisible, setPreApproveVisible] = useState(false);
   const [preApproveChecking, setPreApproveChecking] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Re-focus textarea after loading finishes (disabled state removes focus)
+  useEffect(() => {
+    if (!isLoading) textareaRef.current?.focus();
+  }, [isLoading]);
   const [quoteId, setQuoteId] = useState<string | undefined>();
   const [reviewStars, setReviewStars] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
@@ -1781,9 +1786,9 @@ function QuotePanel({
             {/* Terms checkbox — guests only, shown when button becomes active */}
             {isGuest && canApprove && (
               <label style={{
-                display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
                 fontSize: "12px", color: "#4b5563", lineHeight: 1.5, direction: "rtl",
-                marginBottom: 4, width: "100%",
+                marginBottom: 4, justifyContent: "center",
               }}>
                 <input
                   type="checkbox"
