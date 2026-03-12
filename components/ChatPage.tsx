@@ -75,7 +75,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       ].filter(Boolean).join(" | ") || undefined,
       company_logo: guestLogoUrl,
     } : guestReady ? {
-      company_name: "העסק שלך",
+      company_name: preApproveDraft.company_name || "העסק שלך",
       industry: quote.industry ?? "כללי",
       company_logo: guestLogoUrl,
     } : undefined);
@@ -267,12 +267,13 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     const text = input.trim();
     if (!text || isLoading || submitChecking) return;
     setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
     if (isGuest && !guestReady) {
       handleGuestStepAnswer(text);
     } else {
       sendMessage(text, quote);
     }
-    setTimeout(() => textareaRef.current?.focus(), 0);
+    setTimeout(() => textareaRef.current?.focus(), 50);
   }, [input, isLoading, submitChecking, isGuest, guestInfo, quote, sendMessage, handleGuestStepAnswer]);
 
   // ── PDF: Improve quote ────────────────────────────────────────────────────
@@ -599,6 +600,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
             termsAccepted={termsAccepted}
             onTermsChange={setTermsAccepted}
             onLogoUpload={setGuestLogoUrl}
+            onCompanyNameChange={isGuest && !guestInfo ? (name) => setPreApproveDraft(p => ({ ...p, company_name: name })) : undefined}
+            companyPhone={isGuest && !guestInfo ? preApproveDraft.phone : undefined}
+            onCompanyPhoneChange={isGuest && !guestInfo ? (phone) => setPreApproveDraft(p => ({ ...p, phone })) : undefined}
           />
         )}
         {/* Decorative chat input — mobile preview only — tapping returns to chat */}
@@ -1213,6 +1217,9 @@ function QuotePanel({
   termsAccepted,
   onTermsChange,
   onLogoUpload,
+  onCompanyNameChange,
+  companyPhone,
+  onCompanyPhoneChange,
 }: {
   quote: Partial<Quote>;
   companyName: string;
@@ -1234,9 +1241,16 @@ function QuotePanel({
   termsAccepted?: boolean;
   onTermsChange?: (v: boolean) => void;
   onLogoUpload?: (url: string) => void;
+  onCompanyNameChange?: (name: string) => void;
+  companyPhone?: string;
+  onCompanyPhoneChange?: (phone: string) => void;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [editingCompanyName, setEditingCompanyName] = useState(false);
+  const [companyNameDraft, setCompanyNameDraft] = useState("");
+  const [editingCompanyPhone, setEditingCompanyPhone] = useState(false);
+  const [companyPhoneDraft, setCompanyPhoneDraft] = useState("");
 
   const [editingItemIdx, setEditingItemIdx] = useState<number | null>(null);
   const [itemNameDraft, setItemNameDraft] = useState("");
@@ -1389,11 +1403,60 @@ function QuotePanel({
             onChange={handleLogoFile}
           />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: "15px", fontWeight: 700, color: "#111827" }}>{companyName}</div>
+            {/* Company name — editable for guests */}
+            {editingCompanyName ? (
+              <input
+                autoFocus
+                value={companyNameDraft}
+                onChange={(e) => setCompanyNameDraft(e.target.value)}
+                onBlur={() => { onCompanyNameChange?.(companyNameDraft || companyName); setEditingCompanyName(false); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { onCompanyNameChange?.(companyNameDraft || companyName); setEditingCompanyName(false); }
+                  if (e.key === "Escape") setEditingCompanyName(false);
+                }}
+                style={{ ...editInputStyle, fontWeight: 700, fontSize: "15px" }}
+              />
+            ) : (
+              <div
+                onClick={() => { if (onCompanyNameChange) { setCompanyNameDraft(companyName); setEditingCompanyName(true); } }}
+                className={onCompanyNameChange ? "qp-section" : undefined}
+                style={{ display: "flex", alignItems: "center", gap: 4, cursor: onCompanyNameChange ? "text" : "default" }}
+              >
+                <span style={{ fontSize: "15px", fontWeight: 700, color: "#111827" }}>{companyName}</span>
+                {onCompanyNameChange && <span className="qp-edit-icon" style={{ fontSize: "12px", color: "#a78bfa" }}>✏️</span>}
+              </div>
+            )}
             {isGuest && !companyLogo && (
               <div style={{ fontSize: "11px", color: "#a78bfa", marginTop: 2, cursor: "pointer" }} onClick={() => logoInputRef.current?.click()}>
                 הוסף לוגו לעסק ←
               </div>
+            )}
+            {/* Company phone — optional, above date */}
+            {onCompanyPhoneChange && (
+              editingCompanyPhone ? (
+                <input
+                  autoFocus
+                  type="tel"
+                  value={companyPhoneDraft}
+                  onChange={(e) => setCompanyPhoneDraft(e.target.value)}
+                  onBlur={() => { onCompanyPhoneChange(companyPhoneDraft); setEditingCompanyPhone(false); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { onCompanyPhoneChange(companyPhoneDraft); setEditingCompanyPhone(false); }
+                    if (e.key === "Escape") setEditingCompanyPhone(false);
+                  }}
+                  placeholder="050-0000000"
+                  style={{ ...editInputStyle, fontSize: "12px" }}
+                />
+              ) : (
+                <div
+                  onClick={() => { setCompanyPhoneDraft(companyPhone ?? ""); setEditingCompanyPhone(true); }}
+                  className="qp-section"
+                  style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2, cursor: "text" }}
+                >
+                  <span style={{ fontSize: "12px", color: "#6b7280" }}>{companyPhone || "הוסף טלפון ←"}</span>
+                  <span className="qp-edit-icon" style={{ fontSize: "11px", color: "#a78bfa" }}>✏️</span>
+                </div>
+              )
             )}
             {quote.date && (
               <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: 2 }}>
