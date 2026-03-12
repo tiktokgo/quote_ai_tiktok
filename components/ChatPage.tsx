@@ -58,9 +58,6 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
   // ── Guest state ───────────────────────────────────────────────────────────
   const [guestInfo, setGuestInfo] = useState<{ company_name: string; address: string; phone: string; email: string } | null>(null);
   const [guestReady, setGuestReady] = useState(false);
-  // step: 0=waiting for work description, 1=waiting for business name (after draft built)
-  const [guestStep, setGuestStep] = useState<0|1>(0);
-  const [guestBusinessName, setGuestBusinessName] = useState("");
   const guestDraftRef = useRef({ company_name: "", address: "", phone: "" });
   const [submitChecking, setSubmitChecking] = useState(false);
   const [emailExistsAlert, setEmailExistsAlert] = useState(false);
@@ -77,9 +74,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
         guestInfo.email   && `אימייל: ${guestInfo.email}`,
       ].filter(Boolean).join(" | ") || undefined,
       company_logo: guestLogoUrl,
-    } : (guestReady || guestStep === 1) ? {
-      // Draft phase or business-name step: use captured name or fallback
-      company_name: guestBusinessName || "העסק שלך",
+    } : guestReady ? {
+      company_name: "העסק שלך",
       industry: quote.industry ?? "כללי",
       company_logo: guestLogoUrl,
     } : undefined);
@@ -213,10 +209,8 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     const trimmed = answer.trim();
     if (!trimmed) return;
 
-    if (guestStep === 0) {
+    {
       setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
-      // User described work → call AI to build draft, then ask for business name
-      setGuestStep(1);
       setMessages((prev) => [...prev, { role: "assistant", content: "", loading: true }]);
       setIsLoading(true);
       try {
@@ -264,21 +258,9 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
       } finally {
         setIsLoading(false);
       }
-      setMessages((prev) => [
-        ...prev.filter((m) => !m.loading),
-        { role: "assistant", content: "מעולה! ולפני שנמשיך — מה שם העסק שלך? נוסיף אותו להצעה." },
-      ]);
-      // guestReady stays false — waiting for business name in step 1
-
-    } else if (guestStep === 1) {
-      // User provided their business name → store it, unlock free chat
-      setGuestBusinessName(trimmed);
-      setPreApproveDraft((p) => ({ ...p, company_name: trimmed }));
       setGuestReady(true);
-      // Let AI acknowledge and continue naturally
-      sendMessage(trimmed, quote);
     }
-  }, [guestStep, token, quote, sendMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [token, quote, sendMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = useCallback(() => {
     const text = input.trim();
