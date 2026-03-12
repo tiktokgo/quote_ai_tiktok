@@ -463,7 +463,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
               if (inIframe) {
                 window.parent.postMessage({ type: "quote_redirect", url: guestRedirectUrl }, "*");
               } else {
-                window.open(guestRedirectUrl, "_blank");
+                window.location.href = guestRedirectUrl;
               }
             } else {
               setApproveState("idle"); // no redirect URL — release overlay so user isn't stuck
