@@ -202,7 +202,7 @@ export default function ChatPage({ aiContext, isGuest, token }: ChatPageProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, aiContext]);
+  }, [messages, aiContext, effectiveContext]);
 
   // ── Guest step-by-step onboarding ─────────────────────────────────────────
   const handleGuestStepAnswer = useCallback(async (answer: string) => {
