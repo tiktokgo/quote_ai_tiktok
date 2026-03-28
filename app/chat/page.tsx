@@ -9,11 +9,13 @@ export default async function ChatRoute({ searchParams }: PageProps) {
   const params = await searchParams;
   const token  = typeof params.token   === "string" ? params.token   : "";
   const userId = typeof params.user_id === "string" ? params.user_id : undefined;
+  const utmSource = typeof params.utm_source === "string" ? params.utm_source : undefined;
+  const utmMedium = typeof params.utm_medium === "string" ? params.utm_medium : undefined;
 
   const result = verifyToken(token);
 
   if (!result.valid || !result.payload) {
-    return <ChatPage isGuest={true} />;
+    return <ChatPage isGuest={true} utmSource={utmSource} utmMedium={utmMedium} />;
   }
 
   // Token has email → pre-registered guest (skip popup)
@@ -26,9 +28,11 @@ export default async function ChatRoute({ searchParams }: PageProps) {
         phone:        result.payload.phone   ?? "",
         address:      result.payload.address ?? "",
       }}
+      utmSource={utmSource}
+      utmMedium={utmMedium}
     />;
   }
 
   // user_id from JWT takes priority; fall back to URL param for old tokens
-  return <ChatPage aiContext={{ ...result.payload, user_id: result.payload.user_id ?? userId }} token={token} />;
+  return <ChatPage aiContext={{ ...result.payload, user_id: result.payload.user_id ?? userId }} token={token} utmSource={utmSource} utmMedium={utmMedium} />;
 }

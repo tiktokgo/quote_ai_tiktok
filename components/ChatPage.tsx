@@ -40,6 +40,8 @@ interface ChatPageProps {
   isGuest?: boolean;
   token?: string;
   preGuestInfo?: { company_name: string; email: string; phone: string; address: string };
+  utmSource?: string;
+  utmMedium?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -48,7 +50,7 @@ function formatILS(n: number): string {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ChatPage({ aiContext, isGuest, token, preGuestInfo }: ChatPageProps) {
+export default function ChatPage({ aiContext, isGuest, token, preGuestInfo, utmSource, utmMedium }: ChatPageProps) {
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
   const [input, setInput]         = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -106,12 +108,16 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo }: Ch
   }, []);
 
   const bottomRef    = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // improve quote
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const [isListening, setIsListening] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "instant" });
+    // Scroll within the messages container only — prevents parent iframe from jumping
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
   }, [messages]);
 
   // Guest: show first onboarding question on mount
@@ -464,6 +470,8 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo }: Ch
             company_phone: effectiveGuestInfo.phone,
             logo_url:      guestLogoUrl,
             quote:         quoteWithTax,
+            ...(utmSource ? { utm_source: utmSource } : {}),
+            ...(utmMedium ? { utm_medium: utmMedium } : {}),
           }),
         });
       } else {
@@ -726,7 +734,7 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo }: Ch
         </div>
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div ref={messagesContainerRef} style={{ flex: 1, overflowY: "auto", padding: "20px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
 
 
           {messages.map((msg, i) => (
@@ -1299,6 +1307,51 @@ function QuotePanel({
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
+  // Website scanner
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerUrl, setScannerUrl] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState("");
+
+  const handleScanWebsite = async () => {
+    if (!scannerUrl.trim()) return;
+    setScanning(true);
+    setScanError("");
+    try {
+      const res = await fetch("/api/scan-website", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: scannerUrl.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setScanError(data.error || "לא הצלחנו לסרוק את האתר");
+        return;
+      }
+      // Auto-fill company info
+      if (data.company_name && onCompanyNameChange) onCompanyNameChange(data.company_name);
+      if (data.phone && onCompanyPhoneChange) onCompanyPhoneChange(data.phone);
+      if (data.logo_url && onLogoUpload) {
+        // Fetch logo from URL and upload it
+        try {
+          const logoRes = await fetch(data.logo_url);
+          const blob = await logoRes.blob();
+          const file = new File([blob], "logo.png", { type: blob.type || "image/png" });
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          const syntheticEvent = { target: { files: dt.files, value: "" } } as unknown as React.ChangeEvent<HTMLInputElement>;
+          handleLogoFile(syntheticEvent);
+        } catch { /* logo fetch failed — skip */ }
+      }
+      setScannerOpen(false);
+      setScannerUrl("");
+    } catch {
+      setScanError("שגיאה בסריקה");
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const handleLogoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -1455,6 +1508,16 @@ function QuotePanel({
                 הוסף לוגו לעסק ←
               </div>
             )}
+            {/* Website scanner — guests only */}
+            {isGuest && (
+              <div
+                onClick={() => setScannerOpen(true)}
+                style={{ fontSize: "11px", color: "#7c3aed", marginTop: 3, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}
+              >
+                <span style={{ fontSize: "13px" }}>✨</span>
+                <span>סרוק מהאתר</span>
+              </div>
+            )}
             {/* Company phone — optional, above date */}
             {onCompanyPhoneChange && (
               editingCompanyPhone ? (
@@ -1489,6 +1552,57 @@ function QuotePanel({
             )}
           </div>
         </div>
+
+        {/* Website scanner popup */}
+        {scannerOpen && (
+          <div style={{
+            position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+            background: "rgba(0,0,0,0.3)", backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+          }} onClick={() => { if (!scanning) { setScannerOpen(false); setScanError(""); } }}>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: "#fff", borderRadius: 16, padding: "24px", maxWidth: 360, width: "90%",
+                boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: "20px" }}>✨</span>
+                <span style={{ fontSize: "16px", fontWeight: 700, color: "#111" }}>סרוק מהאתר</span>
+              </div>
+              <p style={{ fontSize: "12px", color: "#6b7280", marginBottom: 12 }}>נשלוף לוגו, שם חברה, טלפון ועוד מהאתר שלך</p>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <input
+                  type="text"
+                  value={scannerUrl}
+                  onChange={(e) => setScannerUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleScanWebsite()}
+                  placeholder="example.co.il"
+                  dir="ltr"
+                  autoFocus
+                  style={{
+                    flex: 1, border: "1px solid #e5e7eb", borderRadius: 10, padding: "10px 12px",
+                    fontSize: "14px", outline: "none",
+                  }}
+                />
+                <button
+                  onClick={handleScanWebsite}
+                  disabled={scanning || !scannerUrl.trim()}
+                  style={{
+                    padding: "10px 18px", borderRadius: 10, border: "none",
+                    background: scanning ? "#d1d5db" : "#7c3aed", color: "#fff",
+                    fontWeight: 700, fontSize: "13px", cursor: scanning ? "wait" : "pointer",
+                    opacity: !scannerUrl.trim() ? 0.5 : 1,
+                  }}
+                >
+                  {scanning ? "סורק..." : "סרוק"}
+                </button>
+              </div>
+              {scanError && <p style={{ fontSize: "12px", color: "#ef4444", margin: 0 }}>{scanError}</p>}
+            </div>
+          </div>
+        )}
 
         {/* Document header */}
         <div style={{ textAlign: "center", marginBottom: 20, paddingBottom: 16, borderBottom: `2px solid ${primary}` }}>

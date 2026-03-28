@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://www.wisy.co.il/\" --user-agent \"Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36\" -L)",
+      "Read(//c/Users/amits/Projects/quote_ai_tiktok/**)",
+      "Read(//c/Users/amits/Projects/**)",
+      "Bash(dir \"C:\\\\Users\\\\amits\\\\Projects\" /b)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\amits\\Projects\\sign-il"
+    ]
+  }
+}
