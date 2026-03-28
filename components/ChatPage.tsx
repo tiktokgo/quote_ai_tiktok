@@ -1644,13 +1644,12 @@ function QuotePanel({
           </div>
         )}
 
-        {/* Client */}
-        {(quote.client?.name || quote.client?.address || quote.client?.phone || quote.client?.email) && (
-          <div style={{ marginBottom: 18, padding: "12px 14px", background: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb" }}>
-            <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-              פרטי לקוח
-            </div>
-            {quote.client?.name && <div style={{ fontSize: "14px", fontWeight: 700, color: "#111827" }}>{quote.client.name}</div>}
+        {/* Client — always show */}
+        <div style={{ marginBottom: 18, padding: "12px 14px", background: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb" }}>
+          <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+            פרטי לקוח
+          </div>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: quote.client?.name ? "#111827" : "#d1d5db" }}>{quote.client?.name || "שם לקוח"}</div>
             {/* Address — always editable */}
             {editingAddress ? (
               <input
@@ -1671,10 +1670,9 @@ function QuotePanel({
                 {quote.client?.address || "הוסף כתובת ✏️"}
               </div>
             )}
-            {quote.client?.phone && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.phone}</div>}
-            {quote.client?.email && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.email}</div>}
-          </div>
-        )}
+          {quote.client?.phone && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.phone}</div>}
+          {quote.client?.email && <div style={{ fontSize: "12px", color: "#6b7280", marginTop: 2 }}>{quote.client.email}</div>}
+        </div>
 
         {/* Items */}
         {quote.items && quote.items.length > 0 && (
@@ -1805,7 +1803,7 @@ function QuotePanel({
                   title="לחץ לעריכה"
                   style={{ fontSize: "20px", fontWeight: 800, color: quote.total > 0 ? primary : accent, cursor: "pointer" }}
                 >
-                  {quote.total > 0 ? formatILS(quote.total) : "מחיר יעודכן ✏️"}
+                  {quote.total > 0 ? formatILS(quote.total) : "עדכון מחיר ✏️"}
                 </span>
               )}
             </div>
