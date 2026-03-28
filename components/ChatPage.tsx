@@ -1332,16 +1332,7 @@ function QuotePanel({
       if (data.company_name && onCompanyNameChange) onCompanyNameChange(data.company_name);
       if (data.phone && onCompanyPhoneChange) onCompanyPhoneChange(data.phone);
       if (data.logo_url && onLogoUpload) {
-        // Fetch logo from URL and upload it
-        try {
-          const logoRes = await fetch(data.logo_url);
-          const blob = await logoRes.blob();
-          const file = new File([blob], "logo.png", { type: blob.type || "image/png" });
-          const dt = new DataTransfer();
-          dt.items.add(file);
-          const syntheticEvent = { target: { files: dt.files, value: "" } } as unknown as React.ChangeEvent<HTMLInputElement>;
-          handleLogoFile(syntheticEvent);
-        } catch { /* logo fetch failed — skip */ }
+        onLogoUpload(data.logo_url);
       }
       setScannerOpen(false);
       setScannerUrl("");
