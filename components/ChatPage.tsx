@@ -1321,7 +1321,7 @@ function QuotePanel({
       const res = await fetch("/api/scan-website", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: scannerUrl.trim() }),
+        body: JSON.stringify({ url: scannerUrl.trim() }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
