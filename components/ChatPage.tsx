@@ -1798,9 +1798,8 @@ function QuotePanel({
           </div>
         )}
 
-        {/* Total */}
-        {quote.total !== undefined && (
-          <div style={{ marginBottom: 18, padding: "14px 16px", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
+        {/* Total — always show */}
+        <div style={{ marginBottom: 18, padding: "14px 16px", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "13px", color: primary, fontWeight: 600 }}>סה&quot;כ לתשלום</span>
               {editingTotal ? (
@@ -1821,9 +1820,9 @@ function QuotePanel({
                 <span
                   onClick={() => { setTotalDraft(quote.total && quote.total > 0 ? String(quote.total) : ""); setEditingTotal(true); }}
                   title="לחץ לעריכה"
-                  style={{ fontSize: "20px", fontWeight: 800, color: quote.total > 0 ? primary : accent, cursor: "pointer" }}
+                  style={{ fontSize: "20px", fontWeight: 800, color: (quote.total ?? 0) > 0 ? primary : accent, cursor: "pointer" }}
                 >
-                  {quote.total > 0 ? formatILS(quote.total) : "עדכון מחיר ✏️"}
+                  {(quote.total ?? 0) > 0 ? formatILS(quote.total!) : "עדכון מחיר ✏️"}
                 </span>
               )}
             </div>
@@ -1833,7 +1832,6 @@ function QuotePanel({
               </div>
             )}
           </div>
-        )}
 
         {/* Terms — editable */}
         {combinedTerms && (
