@@ -393,6 +393,10 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo, utmS
     setQuote((prev) => ({ ...prev, client: { ...(prev.client ?? {}), address } }));
   }, []);
 
+  const handleUpdateClientName = useCallback((name: string) => {
+    setQuote((prev) => ({ ...prev, client: { ...(prev.client ?? {}), name } }));
+  }, []);
+
   // ── Approve quote → send full quote to Bubble ─────────────────────────────
   const [approveState, setApproveState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -613,7 +617,7 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo, utmS
           <QuotePanel
             quote={quote}
             companyName={effectiveContext?.company_name ?? ""}
-            companyLogo={effectiveContext?.company_logo}
+            companyLogo={effectiveContext?.company_logo || guestLogoUrl}
             onApprove={handleApprove}
             approveState={approveState}
             approveLabel="יצירת הצעה"
@@ -624,6 +628,7 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo, utmS
             onUpdateComments={handleUpdateComments}
             onUpdateTotal={handleUpdateTotal}
             onUpdateAddress={handleUpdateAddress}
+            onUpdateClientName={handleUpdateClientName}
             onBackToChat={isMobile ? () => setMobileView("chat") : undefined}
             isGuest={isGuest}
             termsAccepted={termsAccepted}
@@ -1242,6 +1247,7 @@ function QuotePanel({
   onUpdateComments,
   onUpdateTotal,
   onUpdateAddress,
+  onUpdateClientName,
   onBackToChat,
   primaryColor,
   accentColor,
@@ -1267,6 +1273,7 @@ function QuotePanel({
   onUpdateComments: (comments: string) => void;
   onUpdateTotal: (total: number) => void;
   onUpdateAddress: (address: string) => void;
+  onUpdateClientName?: (name: string) => void;
   onBackToChat?: () => void;
   approveLabel?: string;
   isGuest?: boolean;
@@ -1303,6 +1310,8 @@ function QuotePanel({
 
   const [editingAddress, setEditingAddress] = useState(false);
   const [addressDraft, setAddressDraft] = useState("");
+  const [editingClientName, setEditingClientName] = useState(false);
+  const [clientNameDraft, setClientNameDraft] = useState("");
 
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -1640,7 +1649,27 @@ function QuotePanel({
           <div style={{ fontSize: "10px", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
             פרטי לקוח
           </div>
-          <div style={{ fontSize: "14px", fontWeight: 700, color: quote.client?.name ? "#111827" : "#d1d5db" }}>{quote.client?.name || "שם לקוח"}</div>
+          {editingClientName ? (
+            <input
+              autoFocus
+              value={clientNameDraft}
+              onChange={(e) => setClientNameDraft(e.target.value)}
+              onBlur={() => { setEditingClientName(false); if (clientNameDraft.trim() && onUpdateClientName) onUpdateClientName(clientNameDraft.trim()); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingClientName(false); }}
+              placeholder="שם לקוח"
+              style={{ ...editInputStyle, fontWeight: 700, fontSize: "14px" }}
+            />
+          ) : (
+            <div
+              onClick={() => { setClientNameDraft(quote.client?.name ?? ""); setEditingClientName(true); }}
+              title="לחץ לעריכה"
+              className="qp-section"
+              style={{ fontSize: "14px", fontWeight: 700, color: quote.client?.name ? "#111827" : "#a78bfa", cursor: "text", display: "flex", alignItems: "center", gap: 4 }}
+            >
+              {quote.client?.name || "שם לקוח ✏️"}
+              {quote.client?.name && <span className="qp-edit-icon" style={{ fontSize: "12px", color: "#a78bfa" }}>✏️</span>}
+            </div>
+          )}
             {/* Address — always editable */}
             {editingAddress ? (
               <input
