@@ -204,7 +204,27 @@ export async function POST(req: NextRequest) {
   const title      = extractTitle(html);
   const jsonLd     = extractJsonLd(html);
 
-  const logo_url = resolveUrl(url, ogImage || touchIcon) || google_favicon;
+  // Try to find actual logo from HTML — look for img tags with logo-related attributes
+  function findLogoInHtml(h: string): string {
+    // JSON-LD logo
+    if (jsonLd.logo) {
+      const ldLogo = typeof jsonLd.logo === "string" ? jsonLd.logo : (jsonLd.logo as Record<string, string>)?.url;
+      if (ldLogo) return ldLogo;
+    }
+    // <img> with class/id/alt containing "logo"
+    const logoImgMatch = h.match(/<img[^>]*(?:class|id|alt)=["'][^"']*logo[^"']*["'][^>]*src=["']([^"']+)["']/i)
+      || h.match(/<img[^>]*src=["']([^"']+)["'][^>]*(?:class|id|alt)=["'][^"']*logo[^"']*["']/i);
+    if (logoImgMatch?.[1]) return logoImgMatch[1];
+    // <a> wrapping <img> in header/nav
+    const headerLogoMatch = h.match(/<(?:header|nav)[^>]*>[\s\S]*?<img[^>]*src=["']([^"']+)["'][^>]*>[\s\S]*?<\/(?:header|nav)>/i);
+    if (headerLogoMatch?.[1]) return headerLogoMatch[1];
+    return "";
+  }
+
+  const htmlLogo = findLogoInHtml(html);
+  // Priority: JSON-LD logo > HTML logo img > apple-touch-icon > Google favicon
+  // Intentionally skip og:image — it's usually a social banner, not the logo
+  const logo_url = resolveUrl(url, htmlLogo || touchIcon) || google_favicon;
 
   // Extract brand colors from all fetched pages
   const [color1, color2] = extractBrandColors(combinedHtml);
