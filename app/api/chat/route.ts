@@ -104,12 +104,22 @@ export async function POST(req: NextRequest) {
       aiContext = result.payload;
     }
 
-    if (!messages || !aiContext) {
+    if (!Array.isArray(messages) || !aiContext) {
       return new Response(JSON.stringify({ error: "Missing messages or aiContext" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
+
+    // SECURITY / cost: the endpoint is open to guests, so cap the input and
+    // never let the client inject "system" instructions.
+    // (The current quote is sent separately, so older turns can be dropped.)
+    const MAX_MESSAGES = 60;
+    const MAX_CHARS = 50000; // a parsed PDF arrives as one user message
+    const safeMessages = messages
+      .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .slice(-MAX_MESSAGES)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_CHARS) }));
 
     const systemMessage: OpenAI.Chat.ChatCompletionMessageParam = {
       role: "system",
@@ -127,7 +137,7 @@ export async function POST(req: NextRequest) {
     const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       systemMessage,
       ...contextMessages,
-      ...messages.map((m) => ({ role: m.role, content: m.content } as OpenAI.Chat.ChatCompletionMessageParam)),
+      ...safeMessages.map((m) => ({ role: m.role, content: m.content } as OpenAI.Chat.ChatCompletionMessageParam)),
     ];
 
     const stream = await openai.chat.completions.create({

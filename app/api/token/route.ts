@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import jwt from "jsonwebtoken";
+import { safeEqual } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   const jwtSecret  = process.env.JWT_SECRET;
@@ -35,8 +36,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Validate API key
-  if (validApiKey && body.api_key !== validApiKey) {
+  // Validate API key — fail closed: without TOKEN_API_KEY anyone could mint
+  // a JWT for any user_id (and use the chat on our OpenAI account)
+  if (!validApiKey) {
+    console.error("TOKEN_API_KEY not set — refusing to issue tokens");
+    return new Response(JSON.stringify({ error: "Server misconfigured" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (typeof body.api_key !== "string" || !safeEqual(body.api_key, validApiKey)) {
     return new Response(JSON.stringify({ error: "Invalid api_key" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
@@ -50,7 +59,9 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const expiresInSeconds = Math.round((body.expiresInHours ?? 24) * 3600);
+  // At most 30 days
+  const hours = Math.min(Math.max(Number(body.expiresInHours ?? 24) || 24, 0.1), 720);
+  const expiresInSeconds = Math.round(hours * 3600);
 
   const payload = {
     company_name: body.company_name,

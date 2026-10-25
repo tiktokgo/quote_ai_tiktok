@@ -13,6 +13,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (file.size > 15 * 1024 * 1024) {
+      return new Response(JSON.stringify({ error: "File too large (max 15MB)" }), {
+        status: 413,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     const buffer = Buffer.from(await file.arrayBuffer());
     const result = await pdfParse(buffer);
     const text: string = result.text ?? "";

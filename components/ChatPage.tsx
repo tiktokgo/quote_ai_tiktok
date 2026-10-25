@@ -419,10 +419,10 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo, utmS
     if (reviewStars === 0) return;
     await fetch("/api/review", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ quote_id: quoteId, user_id: aiContext?.user_id, stars: reviewStars, comment: reviewComment }),
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ quote_id: quoteId, stars: reviewStars, comment: reviewComment }),
     }).catch(() => {});
-  }, [reviewStars, reviewComment, quoteId, aiContext?.user_id]);
+  }, [reviewStars, reviewComment, quoteId, token]);
 
   useEffect(() => () => { if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current); }, []);
 
@@ -479,10 +479,11 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo, utmS
           }),
         });
       } else {
+        // user_id is taken from the JWT on the server
         res = await fetch("/api/approve-quote", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: aiContext?.user_id, quote: quoteWithTax }),
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ quote: quoteWithTax }),
         });
       }
       const data = await res.json() as { ok: boolean; quote_id?: string; redirect_url?: string };
@@ -522,7 +523,7 @@ export default function ChatPage({ aiContext, isGuest, token, preGuestInfo, utmS
       setApproveState("error");
       setTimeout(() => setApproveState("idle"), 3000);
     }
-  }, [aiContext, isGuest, guestInfo, quote, guestLogoUrl, performRedirect]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [aiContext, isGuest, guestInfo, quote, guestLogoUrl, performRedirect, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Pre-approve form submit ────────────────────────────────────────────────
   const handlePreApproveSubmit = useCallback(async () => {

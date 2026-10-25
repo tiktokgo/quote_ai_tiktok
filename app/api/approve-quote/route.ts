@@ -1,7 +1,19 @@
 import { NextRequest } from "next/server";
 import type { PartialQuote } from "@/lib/quoteSchema";
+import { userIdFromRequest } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
+  // SECURITY: user_id comes ONLY from the JWT — never from the body.
+  // Otherwise anyone could create a quote in another user's account.
+  const auth = userIdFromRequest(req);
+  if (!auth.ok) {
+    return new Response(JSON.stringify({ ok: false, message: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const user_id = auth.userId;
+
   const url = process.env.BUBBLE_WEBHOOK_URL;
   const key = process.env.BUBBLE_API_KEY;
 
@@ -12,7 +24,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  let body: { user_id?: string; quote: PartialQuote };
+  let body: { quote: PartialQuote };
   try {
     body = await req.json();
   } catch {
@@ -22,11 +34,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { user_id, quote } = body;
+  const { quote } = body;
+  if (!quote || typeof quote !== "object") {
+    return new Response(JSON.stringify({ ok: false, message: "Missing quote" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   // Build full payload — include every field
-  const payload: Record<string, unknown> = { status: "complete" };
-  if (user_id)                   payload.user_id       = user_id;
+  const payload: Record<string, unknown> = { status: "complete", user_id };
   if (quote.title)                payload.title          = quote.title;
   if (quote.client?.name)         payload.client_name    = quote.client.name;
   if (quote.client?.address)      payload.client_address = quote.client.address;

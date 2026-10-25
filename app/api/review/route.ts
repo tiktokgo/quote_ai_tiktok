@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
+import { userIdFromRequest } from "@/lib/auth";
 
 export async function POST(req: Request) {
-  const { quote_id, user_id, stars, comment } = await req.json() as {
+  const { quote_id, stars, comment } = await req.json() as {
     quote_id?: string;
-    user_id?: string;
     stars: number;
     comment?: string;
   };
+  // user_id only from a valid JWT (guests have none)
+  const auth = userIdFromRequest(req);
+  const user_id = auth.ok ? auth.userId : undefined;
 
   const url = process.env.REVIEW_WEBHOOK_URL;
   const key = process.env.BUBBLE_API_KEY;
