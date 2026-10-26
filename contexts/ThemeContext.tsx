@@ -12,7 +12,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>('light')
 
   useEffect(() => {
-    const saved = localStorage.getItem('theme') as Theme | null
+    // localStorage throws where storage is blocked (sandboxed iframe, e.g. the Bubble editor preview)
+    let saved: Theme | null = null
+    try { saved = localStorage.getItem('theme') as Theme | null } catch { /* storage blocked */ }
     const initial = saved ?? 'light'
     setTheme(initial)
     document.documentElement.setAttribute('data-theme', initial)
@@ -21,7 +23,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
     setTheme(next)
-    localStorage.setItem('theme', next)
+    try { localStorage.setItem('theme', next) } catch { /* storage blocked */ }
     document.documentElement.setAttribute('data-theme', next)
   }
 
