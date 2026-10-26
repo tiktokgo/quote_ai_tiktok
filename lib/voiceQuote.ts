@@ -168,7 +168,9 @@ export async function transcribe(openai: OpenAI, audio: File, industry?: string)
     file: audio,
     model: "gpt-4o-transcribe",
     language: "he",
-    prompt: `הקלטה של בעל מקצוע${industry ? ` בתחום ${industry}` : ""} שמכתיב הצעת מחיר: שם לקוח, טלפון, כתובת, עבודות, כמויות ומחירים בשקלים.`,
+    // Keep this to vocabulary only: a prompt that describes the expected content
+    // ("client name, phone, address…") gets "transcribed" when the audio is silent.
+    prompt: `הצעת מחיר${industry ? `, ${industry}` : ""}. ש"ח, מ"ר, מע"מ.`,
   });
   return res.text.trim();
 }

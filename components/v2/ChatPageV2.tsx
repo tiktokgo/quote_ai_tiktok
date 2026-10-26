@@ -197,6 +197,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   // ── Voice: record (MediaRecorder) → /api/v2/transcribe → send as a message ──
   // Same approach as the Bubble voice_test page, which worked on desktop, mobile and the app.
   const MAX_REC_SEC = 180;
+  const SILENCE_RMS = 0.015; // room noise is ~0.002–0.008; normal speech peaks well above 0.05
   const handleVoice = useCallback(async () => {
     if (voice === "transcribing" || isLoading) return;
     if (voice === "recording") { recorderRef.current?.stop(); return; }
@@ -216,13 +217,39 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     const rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
     const used = rec.mimeType || type || "audio/mp4";
     const chunks: Blob[] = [];
+    // Level meter: a silent recording must not reach the transcriber — on silence it
+    // invents plausible text ("אילן 054…, רחוב הברזל") instead of returning nothing.
+    let peak = 0;
+    let meter: { ctx: AudioContext; analyser: AnalyserNode; buf: Float32Array<ArrayBuffer> } | null = null;
+    try {
+      const ctx = new AudioContext();
+      void ctx.resume();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      meter = { ctx, analyser, buf: new Float32Array(analyser.fftSize) };
+    } catch { /* no Web Audio — skip the silence check */ }
+    const sampleLevel = () => {
+      if (!meter) return;
+      meter.analyser.getFloatTimeDomainData(meter.buf);
+      let sum = 0;
+      for (const v of meter.buf) sum += v * v;
+      peak = Math.max(peak, Math.sqrt(sum / meter.buf.length));
+    };
     rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
     rec.onstop = async () => {
       if (timerRef.current) clearInterval(timerRef.current);
       stream.getTracks().forEach((t) => t.stop());
+      const measured = !!meter && meter.ctx.state === "running";
+      meter?.ctx.close().catch(() => {});
       buzz(30);
       const blob = new Blob(chunks, { type: used });
       if (blob.size < 1000) { setVoice("idle"); return; }
+      if (measured && peak < SILENCE_RMS) {
+        setVoice("idle");
+        addError("לא שמעתי דיבור בהקלטה — נסה שוב, קרוב יותר למיקרופון");
+        return;
+      }
       setVoice("transcribing");
       try {
         const ext = used.includes("mp4") ? "mp4" : used.includes("ogg") ? "ogg" : "webm";
@@ -247,6 +274,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     timerRef.current = setInterval(() => {
       const s = Math.floor((Date.now() - t0) / 1000);
       setRecSeconds(s);
+      sampleLevel();
       if (s >= MAX_REC_SEC && rec.state === "recording") rec.stop();
     }, 250);
   }, [voice, isLoading, token, send, addError]);
