@@ -54,6 +54,8 @@ export type QuoteUpdateV2 = Partial<Omit<QuoteV2, "client" | "items">> & {
   items?: Partial<QuoteItemV2>[];
   /** per_item only; converted to discount_amount here */
   discount_percent?: number;
+  /** Related items the user did NOT mention — shown as "add?" chips, never put in the quote by themselves. */
+  suggested_items?: { name: string; description?: string }[];
 };
 
 const num = (v: unknown, fallback: number): number => {
@@ -114,8 +116,11 @@ export function computeTotals(q: Partial<QuoteV2>): Totals {
       missingPrices: items.filter((it) => !it.unit_price).length,
     };
   }
+  // total mode: the said amount is final. With has_tax ("the price includes VAT") we only
+  // show how it splits — nothing is added on top.
   const total = Math.max(0, q.total ?? 0);
-  return { subtotal: total, discount: 0, beforeVat: total, vat: 0, grandTotal: total, missingPrices: 0 };
+  const beforeVat = q.has_tax ? round2(total / (1 + VAT_RATE)) : total;
+  return { subtotal: total, discount: 0, beforeVat, vat: round2(total - beforeVat), grandTotal: total, missingPrices: 0 };
 }
 
 /** Merge an AI update into the current quote. Items are always replaced as a full list. */

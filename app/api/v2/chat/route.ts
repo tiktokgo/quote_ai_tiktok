@@ -53,6 +53,15 @@ const UPDATE_QUOTE_TOOL: OpenAI.Chat.ChatCompletionTool = {
         warranty: { type: "string" },
         terms: { type: "string" },
         comments: { type: "string" },
+        suggested_items: {
+          type: "array",
+          description: "2-4 related items the user did NOT mention, offered as optional additions. Never also put them in items.",
+          items: {
+            type: "object",
+            required: ["name"],
+            properties: { name: { type: "string" }, description: { type: "string" } },
+          },
+        },
       },
     },
   },

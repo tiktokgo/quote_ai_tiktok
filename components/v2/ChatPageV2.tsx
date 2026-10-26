@@ -34,10 +34,8 @@ const PURPLE_LIGHT = "#7c3aed26";
 const FLASH_BG = "#dcfce7";
 const MISSING_BG = "#fef3c7";
 
-const EXAMPLES = [
-  { label: "סכום אחד לכל העבודה", text: "שיפוץ חדר אמבטיה לדני כהן בהרצל 5 חולון, כולל פירוק, איטום, ריצוף וכלים סניטריים — 18,000 ₪" },
-  { label: "מחיר לכל פריט", text: "לדני כהן 052-1234567: ריצוף 20 מ\"ר ב-250 למ\"ר, פירוק ריצוף ישן 1,500, פינוי פסולת 400" },
-];
+type Suggestion = { name: string; description?: string };
+type AiSuggest = (kind: "item" | "notes" | "terms", index?: number) => Promise<unknown[]>;
 
 // ── Draft persistence (survives a refresh of the Bubble iframe) ───────────────
 const draftKey = (userId?: string) => `quote_v2_draft:${userId ?? "anon"}`;
@@ -111,6 +109,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
   const [flash, setFlash] = useState<number[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   const [isMobile, setIsMobile] = useState(false);
   const [chatOpen, setChatOpen] = useState(false); // mobile: full conversation over the quote
@@ -168,6 +167,10 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
           .map((it, i) => (JSON.stringify(it) !== JSON.stringify(before[i]) ? i : -1))
           .filter((i) => i >= 0);
         setQuote(next);
+        if (data.quote.suggested_items?.length) {
+          const have = new Set((next.items ?? []).map((it) => it.name.trim()));
+          setSuggestions(data.quote.suggested_items.filter((s) => s?.name?.trim() && !have.has(s.name.trim())).slice(0, 4));
+        }
         if (changed.length && before.length) {
           setFlash(changed);
           if (flashTimer.current) clearTimeout(flashTimer.current);
@@ -312,6 +315,29 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const setItems = useCallback((fn: (items: QuoteItemV2[]) => QuoteItemV2[]) =>
     setQuote((prev) => ({ ...prev, items: fn(prev.items ?? []) })), []);
 
+  // ✨ AI options the user picks from (item wording, notes, terms) — nothing is applied without a tap.
+  const aiSuggest = useCallback<AiSuggest>(async (kind, index) => {
+    const res = await fetch("/api/v2/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ kind, quote, index }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { options?: unknown[]; error?: string };
+    if (!res.ok || !Array.isArray(data.options)) throw new Error(data.error ?? `HTTP ${res.status}`);
+    return data.options;
+  }, [token, quote]);
+
+  const addSuggestion = useCallback((i: number) => {
+    const s = suggestions[i];
+    if (!s) return;
+    const at = quote.items?.length ?? 0;
+    setItems((list) => [...list, normalizeItem({ name: s.name, description: s.description ?? "", unit: DEFAULT_UNIT })]);
+    setSuggestions((prev) => prev.filter((_, j) => j !== i));
+    setFlash([at]);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash([]), 2200);
+  }, [suggestions, quote.items, setItems]);
+
   const resumeDraft = useCallback(() => {
     if (!pendingDraft) return;
     setMessages(pendingDraft.messages.length ? pendingDraft.messages : [{ role: "assistant", content: greeting }]);
@@ -342,6 +368,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setSaveState("idle");
     setChatOpen(false);
     setInput("");
+    setSuggestions([]);
   }, [confirmNew, aiContext.user_id, greeting]);
 
   // ── Save to Bubble ──────────────────────────────────────────────────────────
@@ -430,6 +457,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       saveError={saveError}
       isTest={bubbleEnv === "test"}
       flash={flash}
+      suggestions={suggestions}
+      onAddSuggestion={addSuggestion}
+      aiSuggest={aiSuggest}
     />
   );
 
@@ -467,9 +497,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
           {showChat ? (
             <>
               {hasQuote && (
-                <button dir="rtl" onClick={() => setChatOpen(false)} style={{ flexShrink: 0, border: "none", borderBottom: "1px solid #f0f0f0", background: "#faf5ff", padding: "8px 16px", textAlign: "right", fontFamily: "inherit", fontSize: 13, color: PURPLE, cursor: "pointer" }}>
-                  ▾ חזרה להצעה
-                </button>
+                <div dir="rtl" style={{ flexShrink: 0, padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>
+                  <button onClick={() => setChatOpen(false)} style={{
+                    width: "100%", padding: "12px 16px", borderRadius: 14, border: "none", cursor: "pointer", fontFamily: "inherit",
+                    fontSize: 15, fontWeight: 700, color: "#fff", background: `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`,
+                  }}>📋 חזרה להצעה</button>
+                </div>
               )}
               {messageList}
             </>
@@ -478,14 +511,19 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         <div dir="rtl" style={{ flexShrink: 0, borderTop: "1px solid #e8eaed", background: "#fafafa", padding: "8px 10px calc(10px + env(safe-area-inset-bottom))" }}>
           {!showChat && lastAi && (
             <button onClick={() => setChatOpen(true)} aria-label="פתיחת כל השיחה" style={{
-              display: "block", width: "100%", textAlign: "right", border: "1px solid #ede9fe", background: lastAi.error ? "#fef2f2" : "#fff",
-              borderRadius: 14, padding: "8px 12px", marginBottom: 8, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5,
-              color: lastAi.error ? "#b91c1c" : "#1a1a2e", cursor: "pointer",
+              display: "flex", gap: 8, alignItems: "flex-start", width: "100%", textAlign: "right", border: "none", background: "transparent",
+              padding: 0, marginBottom: 10, fontFamily: "inherit", cursor: "pointer",
             }}>
-              {lastAi.loading ? <Dots /> : (
-                <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{lastAi.content}</span>
-              )}
-              <span style={{ display: "block", fontSize: 11, color: PURPLE, marginTop: 2 }}>▴ כל השיחה</span>
+              <AiAvatar />
+              <span style={{
+                flex: 1, minWidth: 0, background: lastAi.error ? "#fef2f2" : "#ede9fe", borderRadius: "16px 4px 16px 16px",
+                padding: "8px 12px", fontSize: 14, lineHeight: 1.5, color: lastAi.error ? "#b91c1c" : "#2e1065",
+              }}>
+                {lastAi.loading ? <Dots /> : (
+                  <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{lastAi.content}</span>
+                )}
+                <span style={{ display: "block", fontSize: 11, color: PURPLE, marginTop: 4, fontWeight: 600 }}>כל השיחה ←</span>
+              </span>
             </button>
           )}
           {composer}
@@ -557,12 +595,6 @@ function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSecon
               background: input.trim() && !working ? `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})` : "#e8eaed", color: input.trim() && !working ? "#fff" : "#9ca3af",
             }}>צור הצעה ←</button>
           </div>
-        </div>
-
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {EXAMPLES.map((ex) => (
-            <button key={ex.label} onClick={() => setInput(ex.text)} disabled={working} style={{ ...chipStyle, fontSize: 13, background: "#f5f3ff", border: "none" }}>{ex.label}</button>
-          ))}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#9ca3af", fontSize: 13 }}>
@@ -642,17 +674,36 @@ function Composer({ input, setInput, onSend, onVoice, onFile, voice, recSeconds,
   );
 }
 
-function Bubble({ m }: { m: ChatMessage }) {
+function AiAvatar() {
   return (
-    <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-start" : "flex-end" }}>
-      <div aria-live={m.role === "assistant" ? "polite" : undefined} style={{
-        maxWidth: "85%", padding: "10px 16px", borderRadius: 18, fontSize: 15, lineHeight: 1.7,
+    <span aria-hidden style={{
+      flexShrink: 0, width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: 14, color: "#fff", background: `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`,
+    }}>✨</span>
+  );
+}
+
+function Bubble({ m }: { m: ChatMessage }) {
+  if (m.role === "user") {
+    return (
+      <div style={{ display: "flex", justifyContent: "flex-start" }}>
+        <div style={{
+          maxWidth: "85%", padding: "10px 16px", borderRadius: "16px 4px 16px 16px", fontSize: 15, lineHeight: 1.7,
+          wordBreak: "break-word", whiteSpace: "pre-wrap", background: "#f3f4f6", color: "#1a1a2e",
+        }}>{m.display ?? m.content}</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-start", justifyContent: "flex-end" }}>
+      <div aria-live="polite" style={{
+        maxWidth: "85%", padding: "10px 16px", borderRadius: "4px 16px 16px 16px", fontSize: 15, lineHeight: 1.7,
         wordBreak: "break-word", whiteSpace: "pre-wrap",
-        background: m.role === "user" ? "#eef1ff" : m.error ? "#fef2f2" : "#f5f0ff",
-        color: m.error ? "#b91c1c" : "#1a1a2e",
+        background: m.error ? "#fef2f2" : "#ede9fe", color: m.error ? "#b91c1c" : "#2e1065",
       }}>
         {m.loading ? <Dots /> : (m.display ?? m.content)}
       </div>
+      <AiAvatar />
     </div>
   );
 }
@@ -660,6 +711,7 @@ function Bubble({ m }: { m: ChatMessage }) {
 // ── Quote panel ───────────────────────────────────────────────────────────────
 function QuotePanelV2({
   quote, companyName, companyLogo, onEdit, onEditClient, onSetItems, onSwitchMode, onSave, saveState, saveError, isTest, flash,
+  suggestions, onAddSuggestion, aiSuggest,
 }: {
   quote: Q;
   companyName: string;
@@ -673,6 +725,9 @@ function QuotePanelV2({
   saveError: string;
   isTest: boolean;
   flash: number[];
+  suggestions: Suggestion[];
+  onAddSuggestion: (i: number) => void;
+  aiSuggest: AiSuggest;
 }) {
   const perItem = quote.pricing_mode === "per_item";
   const items = quote.items ?? [];
@@ -689,14 +744,48 @@ function QuotePanelV2({
 
   const updateItem = (i: number, patch: Partial<QuoteItemV2>) =>
     onSetItems((list) => list.map((it, j) => (j === i ? normalizeItem({ ...it, ...patch }) : it)));
-  const moveItem = (i: number, d: -1 | 1) =>
-    onSetItems((list) => {
-      const j = i + d;
-      if (j < 0 || j >= list.length) return list;
-      const next = [...list];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
+
+  // ── Drag to reorder (one handle per row; pointer events work for touch and mouse) ──
+  const listRef = useRef<HTMLDivElement>(null);
+  const dragRects = useRef<DOMRect[]>([]);
+  const dragY0 = useRef(0);
+  const [drag, setDrag] = useState<{ from: number; to: number; dy: number; h: number } | null>(null);
+  const onDragStart = (e: React.PointerEvent, i: number) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRects.current = [...(listRef.current?.querySelectorAll("[data-row]") ?? [])].map((el) => el.getBoundingClientRect());
+    dragY0.current = e.clientY;
+    setDrag({ from: i, to: i, dy: 0, h: dragRects.current[i]?.height ?? 0 });
+  };
+  const onDragMove = (e: React.PointerEvent) => {
+    if (!drag) return;
+    const rects = dragRects.current;
+    const dy = e.clientY - dragY0.current;
+    const center = rects[drag.from].top + rects[drag.from].height / 2 + dy;
+    let to = rects.findIndex((r) => center < r.top + r.height / 2);
+    if (to < 0) to = rects.length - 1;
+    else if (to > drag.from) to -= 1;
+    setDrag({ ...drag, dy, to });
+  };
+  const onDragEnd = () => {
+    if (drag && drag.to !== drag.from) {
+      const { from, to } = drag;
+      onSetItems((list) => {
+        const next = [...list];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        return next;
+      });
+    }
+    setDrag(null);
+  };
+  const rowShift = (i: number): number => {
+    if (!drag || i === drag.from) return 0;
+    const h = drag.h;
+    if (drag.from < drag.to && i > drag.from && i <= drag.to) return -h;
+    if (drag.to < drag.from && i >= drag.to && i < drag.from) return h;
+    return 0;
+  };
 
   return (
     <div dir="rtl" style={{ flex: 1, overflowY: "auto", color: "#1a1a2e", display: "flex", flexDirection: "column" }}>
@@ -747,11 +836,15 @@ function QuotePanelV2({
         </div>
 
         {/* Items */}
-        <div style={{ marginBottom: 8 }}>
+        <div ref={listRef} style={{ marginBottom: 8 }}>
           {items.map((it, i) => (
-            <div key={i} style={{
-              padding: "10px 6px", margin: "0 -6px", borderBottom: "1px solid #f3f4f6", borderRadius: 8, transition: "background-color .6s",
-              background: flash.includes(i) ? FLASH_BG : perItem && !it.unit_price ? MISSING_BG : "transparent",
+            <div key={i} data-row style={{
+              padding: "10px 6px", margin: "0 -6px", borderBottom: "1px solid #f3f4f6", borderRadius: 8,
+              position: "relative", zIndex: drag?.from === i ? 2 : 1,
+              transform: `translateY(${drag?.from === i ? drag.dy : rowShift(i)}px)`,
+              transition: drag?.from === i ? "background-color .6s" : "transform .15s, background-color .6s",
+              boxShadow: drag?.from === i ? "0 6px 18px rgba(0,0,0,0.15)" : "none",
+              background: drag?.from === i ? "#fff" : flash.includes(i) ? FLASH_BG : perItem && !it.unit_price ? MISSING_BG : "transparent",
             }}>
               {editingIdx === i ? (
                 <ItemEditor
@@ -759,9 +852,22 @@ function QuotePanelV2({
                   perItem={perItem}
                   onDone={(patch) => { updateItem(i, patch); setEditingIdx(null); }}
                   onCancel={() => setEditingIdx(null)}
+                  onDelete={() => { onSetItems((list) => list.filter((_, j) => j !== i)); setEditingIdx(null); }}
+                  onReword={() => aiSuggest("item", i) as Promise<Suggestion[]>}
                 />
               ) : (
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  {items.length > 1 && (
+                    <span
+                      role="button"
+                      aria-label={`גרירת פריט ${i + 1}`}
+                      onPointerDown={(e) => onDragStart(e, i)}
+                      onPointerMove={onDragMove}
+                      onPointerUp={onDragEnd}
+                      onPointerCancel={onDragEnd}
+                      style={{ flexShrink: 0, width: 24, alignSelf: "stretch", display: "flex", alignItems: "center", justifyContent: "center", color: "#c4b5fd", fontSize: 18, cursor: drag ? "grabbing" : "grab", touchAction: "none", userSelect: "none" }}
+                    >⠿</span>
+                  )}
                   <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: "50%", background: PURPLE_LIGHT, color: PURPLE, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
                   <button onClick={() => setEditingIdx(i)} style={{ flex: 1, minWidth: 0, textAlign: "right", background: "none", border: "none", padding: 0, cursor: "text", fontFamily: "inherit", color: "inherit" }} aria-label={`עריכת פריט ${i + 1}`}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>{it.name}</div>
@@ -773,11 +879,6 @@ function QuotePanelV2({
                       </div>
                     )}
                   </button>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <SmallBtn label="למעלה" onClick={() => moveItem(i, -1)} disabled={i === 0}>▲</SmallBtn>
-                    <SmallBtn label="למטה" onClick={() => moveItem(i, 1)} disabled={i === items.length - 1}>▼</SmallBtn>
-                  </div>
-                  <SmallBtn label="מחיקת פריט" danger onClick={() => onSetItems((list) => list.filter((_, j) => j !== i))}>×</SmallBtn>
                 </div>
               )}
             </div>
@@ -786,6 +887,17 @@ function QuotePanelV2({
             onClick={() => { onSetItems((list) => [...list, normalizeItem({ name: "פריט חדש", unit: DEFAULT_UNIT })]); setEditingIdx(items.length); }}
             style={{ ...chipStyle, marginTop: 10, fontSize: 13 }}
           >+ הוספת פריט</button>
+          {suggestions.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>✨ אולי כדאי להוסיף:</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {suggestions.map((s, i) => (
+                  <button key={s.name} title={s.description} onClick={() => onAddSuggestion(i)}
+                    style={{ ...chipStyle, fontSize: 12, padding: "6px 12px", background: "#faf5ff", border: "1px dashed #c4b5fd" }}>+ {s.name}</button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Totals */}
@@ -805,11 +917,15 @@ function QuotePanelV2({
               )}
             </>
           ) : (
-            <Row
-              label="סה״כ לתשלום"
-              strong
-              value={<NumberEdit value={quote.total ?? 0} onChange={(n) => onEdit({ total: n })} render={(n) => (n ? formatILS(n) : "עדכון מחיר ✏️")} />}
-            />
+            <>
+              {quote.has_tax && t.vat > 0 && <Row label="לפני מע״מ" value={formatILS(t.beforeVat)} />}
+              {quote.has_tax && t.vat > 0 && <Row label="מע״מ 18%" value={formatILS(t.vat)} />}
+              <Row
+                label={quote.has_tax ? "סה״כ כולל מע״מ" : "סה״כ לתשלום"}
+                strong
+                value={<NumberEdit value={quote.total ?? 0} onChange={(n) => onEdit({ total: n })} render={(n) => (n ? formatILS(n) : "עדכון מחיר ✏️")} />}
+              />
+            </>
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12, color: "#4b5563", cursor: "pointer" }}>
             <input type="checkbox" checked={!!quote.has_tax} onChange={(e) => onEdit({ has_tax: e.target.checked })} style={{ accentColor: PURPLE }} />
@@ -817,12 +933,22 @@ function QuotePanelV2({
           </label>
         </div>
 
-        <Box title="תנאים ואחריות">
-          <Editable multiline value={[quote.warranty, quote.terms].filter(Boolean).join("\n")} placeholder="הוספת תנאים ✏️" onChange={(v) => onEdit({ terms: v, warranty: "" })} style={{ fontSize: 12, color: "#4b5563" }} />
-        </Box>
-        <Box title="הערות">
-          <Editable multiline value={quote.comments ?? ""} placeholder="הוספת הערות ✏️" onChange={(v) => onEdit({ comments: v })} style={{ fontSize: 12, color: "#4b5563" }} />
-        </Box>
+        {(() => {
+          const termsText = [quote.warranty, quote.terms].filter(Boolean).join("\n");
+          const append = (cur: string, lines: string[]) => [cur, ...lines].filter((s) => s.trim()).join("\n");
+          return (
+            <>
+              <Box title="תנאים ואחריות">
+                <Editable multiline value={termsText} placeholder="הוספת תנאים ✏️" onChange={(v) => onEdit({ terms: v, warranty: "" })} style={{ fontSize: 12, color: "#4b5563" }} />
+                <AiLines load={() => aiSuggest("terms") as Promise<{ text: string }[]>} onAdd={(lines) => onEdit({ terms: append(termsText, lines), warranty: "" })} />
+              </Box>
+              <Box title="הערות">
+                <Editable multiline value={quote.comments ?? ""} placeholder="הוספת הערות ✏️" onChange={(v) => onEdit({ comments: v })} style={{ fontSize: 12, color: "#4b5563" }} />
+                <AiLines load={() => aiSuggest("notes") as Promise<{ text: string }[]>} onAdd={(lines) => onEdit({ comments: append(quote.comments ?? "", lines) })} />
+              </Box>
+            </>
+          );
+        })()}
         <div style={{ height: 90 }} />
       </div>
 
@@ -852,14 +978,26 @@ function QuotePanelV2({
 }
 
 // ── Item editor ───────────────────────────────────────────────────────────────
-function ItemEditor({ item, perItem, onDone, onCancel }: {
+function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
   item: QuoteItemV2; perItem: boolean;
   onDone: (patch: Partial<QuoteItemV2>) => void; onCancel: () => void;
+  onDelete: () => void; onReword: () => Promise<Suggestion[]>;
 }) {
   const [d, setD] = useState({
     name: item.name, description: item.description,
     quantity: formatQty(item.quantity), unit: item.unit, unit_price: item.unit_price ? String(item.unit_price) : "",
   });
+  const [ai, setAi] = useState<{ state: "idle" | "loading" | "error" } | { state: "ready"; options: Suggestion[] }>({ state: "idle" });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const reword = async () => {
+    setAi({ state: "loading" });
+    try {
+      const options = (await onReword()).filter((o) => o?.name);
+      setAi(options.length ? { state: "ready", options } : { state: "error" });
+    } catch {
+      setAi({ state: "error" });
+    }
+  };
   const parse = (s: string) => parseFloat(s.replace(/,/g, "")) || 0;
   const done = () => onDone({
     name: d.name.trim() || item.name,
@@ -871,6 +1009,23 @@ function ItemEditor({ item, perItem, onDone, onCancel }: {
       onKeyDown={(e) => { if (e.key === "Escape") onCancel(); if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) done(); }}>
       <input autoFocus aria-label="שם הפריט" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} style={inputStyle} />
       <textarea aria-label="תיאור" value={d.description} placeholder="תיאור (לא חובה)" rows={2} onChange={(e) => setD({ ...d, description: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} />
+      {ai.state === "ready" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>בחר ניסוח:</div>
+          {ai.options.map((o, k) => (
+            <button key={k} onClick={() => { setD({ ...d, name: o.name, description: o.description ?? "" }); setAi({ state: "idle" }); }}
+              style={{ textAlign: "right", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd6fe", background: "#fff", cursor: "pointer", fontFamily: "inherit", color: "#1a1a2e" }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{o.name}</div>
+              {o.description && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{o.description}</div>}
+            </button>
+          ))}
+          <button onClick={() => setAi({ state: "idle" })} style={{ ...chipStyle, alignSelf: "flex-start", fontSize: 12, padding: "4px 12px" }}>השאר כמו שהיה</button>
+        </div>
+      ) : (
+        <button onClick={reword} disabled={ai.state === "loading"} style={{ ...chipStyle, alignSelf: "flex-start", fontSize: 12, padding: "5px 12px", background: "#faf5ff", border: "1px dashed #c4b5fd" }}>
+          {ai.state === "loading" ? <>מנסח <Dots /></> : ai.state === "error" ? "✨ לא הצלחתי — נסה שוב" : "✨ שפר ניסוח"}
+        </button>
+      )}
       {perItem && (
         <div style={{ display: "flex", gap: 6 }}>
           <input aria-label="כמות" inputMode="decimal" value={d.quantity} onChange={(e) => setD({ ...d, quantity: e.target.value })} style={{ ...inputStyle, width: 64 }} />
@@ -883,6 +1038,10 @@ function ItemEditor({ item, perItem, onDone, onCancel }: {
       <div style={{ display: "flex", gap: 6 }}>
         <button onClick={done} style={{ ...chipStyle, background: PURPLE, color: "#fff", border: "none" }}>שמירה</button>
         <button onClick={onCancel} style={chipStyle}>ביטול</button>
+        <button
+          onClick={() => (confirmDelete ? onDelete() : setConfirmDelete(true))}
+          style={{ ...chipStyle, marginInlineStart: "auto", border: "none", background: confirmDelete ? "#dc2626" : "transparent", color: confirmDelete ? "#fff" : "#dc2626" }}
+        >{confirmDelete ? "למחוק? לחץ שוב" : "מחיקת פריט"}</button>
       </div>
     </div>
   );
@@ -944,13 +1103,45 @@ function Box({ title, children }: { title: string; children: React.ReactNode }) 
   );
 }
 
-function SmallBtn({ children, onClick, label, disabled, danger }: { children: React.ReactNode; onClick: () => void; label: string; disabled?: boolean; danger?: boolean }) {
+/** "✨ הצעות" under notes / terms: loads 3-4 lines, the user ticks what to add. */
+function AiLines({ load, onAdd }: { load: () => Promise<{ text: string }[]>; onAdd: (lines: string[]) => void }) {
+  const [st, setSt] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [options, setOptions] = useState<string[]>([]);
+  const [picked, setPicked] = useState<number[]>([]);
+  const open = async () => {
+    setSt("loading");
+    try {
+      const lines = (await load()).map((o) => o?.text?.trim()).filter((s): s is string => !!s);
+      setOptions(lines);
+      setPicked([]);
+      setSt(lines.length ? "ready" : "error");
+    } catch {
+      setSt("error");
+    }
+  };
+  if (st !== "ready") {
+    return (
+      <button onClick={open} disabled={st === "loading"} style={{ ...chipStyle, marginTop: 6, fontSize: 12, padding: "4px 12px", background: "#faf5ff", border: "1px dashed #c4b5fd" }}>
+        {st === "loading" ? <>מחפש הצעות <Dots /></> : st === "error" ? "✨ לא הצלחתי — נסה שוב" : "✨ הוסף עם AI"}
+      </button>
+    );
+  }
   return (
-    <button onClick={onClick} disabled={disabled} aria-label={label} title={label} style={{
-      width: 22, height: 20, borderRadius: 6, padding: 0, fontSize: 11, lineHeight: 1, cursor: disabled ? "default" : "pointer",
-      border: danger ? "1px solid #fca5a5" : "1px solid #e5e7eb", background: "#fff",
-      color: danger ? "#ef4444" : "#6b7280", opacity: disabled ? 0.3 : 1,
-    }}>{children}</button>
+    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+      {options.map((line, k) => (
+        <label key={k} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, color: "#1a1a2e", padding: "6px 8px", borderRadius: 8, background: picked.includes(k) ? "#ede9fe" : "#fff", border: "1px solid #ede9fe", cursor: "pointer" }}>
+          <input type="checkbox" checked={picked.includes(k)} onChange={() => setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))} style={{ accentColor: PURPLE, marginTop: 3 }} />
+          <span>{line}</span>
+        </label>
+      ))}
+      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+        <button disabled={!picked.length} onClick={() => { onAdd(picked.sort((a, b) => a - b).map((k) => options[k])); setSt("idle"); }}
+          style={{ ...chipStyle, fontSize: 12, padding: "5px 14px", background: picked.length ? PURPLE : "#e5e7eb", color: picked.length ? "#fff" : "#9ca3af", border: "none" }}>
+          הוספה{picked.length ? ` (${picked.length})` : ""}
+        </button>
+        <button onClick={() => setSt("idle")} style={{ ...chipStyle, fontSize: 12, padding: "5px 14px" }}>ביטול</button>
+      </div>
+    </div>
   );
 }
 
