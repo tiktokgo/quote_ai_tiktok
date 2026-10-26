@@ -12,12 +12,15 @@ import type { QuoteV2, QuoteItemV2, QuoteUpdateV2, PricingMode } from "@/lib/v2/
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /** What the bubble shows when it differs from what the AI gets (e.g. an uploaded file). */
+  display?: string;
   loading?: boolean;
   error?: boolean;
 }
 
 type Q = Partial<QuoteV2>;
 type SaveState = "idle" | "saving" | "saved" | "error";
+type Voice = "idle" | "recording" | "transcribing";
 
 interface Props {
   aiContext: AIContext;
@@ -28,6 +31,13 @@ interface Props {
 const PURPLE = "#7c3aed";
 const PURPLE_2 = "#a855f7";
 const PURPLE_LIGHT = "#7c3aed26";
+const FLASH_BG = "#dcfce7";
+const MISSING_BG = "#fef3c7";
+
+const EXAMPLES = [
+  { label: "סכום אחד לכל העבודה", text: "שיפוץ חדר אמבטיה לדני כהן בהרצל 5 חולון, כולל פירוק, איטום, ריצוף וכלים סניטריים — 18,000 ₪" },
+  { label: "מחיר לכל פריט", text: "לדני כהן 052-1234567: ריצוף 20 מ\"ר ב-250 למ\"ר, פירוק ריצוף ישן 1,500, פינוי פסולת 400" },
+];
 
 // ── Draft persistence (survives a refresh of the Bubble iframe) ───────────────
 const draftKey = (userId?: string) => `quote_v2_draft:${userId ?? "anon"}`;
@@ -51,6 +61,33 @@ function clearDraft(userId?: string) {
   try { localStorage.removeItem(draftKey(userId)); } catch { /* ignore */ }
 }
 
+const buzz = (ms: number | number[]) => { try { navigator.vibrate?.(ms); } catch { /* iOS: not supported */ } };
+const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+/** Phone photos are often 3–8MB; resize to fit the 4MB request limit and keep the text readable. */
+async function shrinkImage(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") || file.size < 1.5 * 1024 * 1024) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
+    return blob ? new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" }) : file;
+  } catch {
+    return file;
+  }
+}
+
+const FILE_ERRORS: Record<string, string> = {
+  scanned_pdf: "ה-PDF סרוק ואין בו טקסט — צלם אותו ושלח כתמונה",
+  not_a_quote: "לא מצאתי בקובץ פרטים להצעת מחיר",
+  too_large: "הקובץ גדול מדי (עד 4MB)",
+  unsupported_type: "אפשר להעלות PDF או תמונה",
+};
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const greeting = `${aiContext.user_name ? `שלום ${aiContext.user_name}! ` : ""}ספר לי על העבודה — מה עושים, למי, וכמה זה עולה (סכום אחד או מחיר לכל פריט). אפשר גם בקול 🎙`;
@@ -62,16 +99,17 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState("");
   const [restored, setRestored] = useState(false);
+  const [fileBusy, setFileBusy] = useState(false);
+  const [flash, setFlash] = useState<number[]>([]);
 
   const [isMobile, setIsMobile] = useState(false);
-  const [mobileView, setMobileView] = useState<"chat" | "preview">("chat");
-  const [unseenUpdate, setUnseenUpdate] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false); // mobile: full conversation over the quote
 
   const messagesRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [voice, setVoice] = useState<"idle" | "recording" | "transcribing">("idle");
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [voice, setVoice] = useState<Voice>("idle");
   const [recSeconds, setRecSeconds] = useState(0);
 
   // Restore a draft once on mount
@@ -95,15 +133,16 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   useEffect(() => {
     if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-  }, [messages]);
+  }, [messages, chatOpen]);
 
   const hasQuote = (quote.items?.length ?? 0) > 0 || !!quote.title;
+  const started = hasQuote || messages.some((m) => m.role === "user");
 
   // ── Send to AI ──────────────────────────────────────────────────────────────
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, display?: string) => {
     const userText = text.trim();
     if (!userText || isLoading) return;
-    const history = [...messages.filter((m) => !m.loading && !m.error), { role: "user" as const, content: userText }];
+    const history = [...messages.filter((m) => !m.loading && !m.error), { role: "user" as const, content: userText, display }];
     setMessages([...history, { role: "assistant", content: "", loading: true }]);
     setIsLoading(true);
     try {
@@ -116,11 +155,20 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       if (!res.ok || !data.text) throw new Error(data.error ?? `HTTP ${res.status}`);
 
       if (data.quote) {
-        const first = !(quote.items?.length);
-        setQuote((prev) => mergeQuoteV2(prev, data.quote!));
-        // Mobile: jump to the preview only for the first draft; later just flag it
-        if (first) setMobileView("preview");
-        else setUnseenUpdate(true);
+        const next = mergeQuoteV2(quote, data.quote);
+        // Flash the rows that are new or changed, so the user sees what the AI touched.
+        const before = quote.items ?? [];
+        const changed = (next.items ?? [])
+          .map((it, i) => (JSON.stringify(it) !== JSON.stringify(before[i]) ? i : -1))
+          .filter((i) => i >= 0);
+        setQuote(next);
+        if (changed.length && before.length) {
+          setFlash(changed);
+          if (flashTimer.current) clearTimeout(flashTimer.current);
+          flashTimer.current = setTimeout(() => setFlash([]), 2200);
+        }
+        setChatOpen(false); // mobile: show the quote that just changed
+        buzz([30, 50, 30]);
       }
       setMessages([...history, { role: "assistant", content: data.text }]);
     } catch {
@@ -134,9 +182,11 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const handleSend = useCallback(() => {
     const t = input;
     setInput("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
     send(t);
   }, [input, send]);
+
+  const addError = useCallback((content: string) =>
+    setMessages((prev) => [...prev, { role: "assistant", content, error: true }]), []);
 
   // ── Voice: record (MediaRecorder) → /api/v2/transcribe → send as a message ──
   // Same approach as the Bubble voice_test page, which worked on desktop, mobile and the app.
@@ -145,14 +195,14 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     if (voice === "transcribing" || isLoading) return;
     if (voice === "recording") { recorderRef.current?.stop(); return; }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      alert("ההקלטה לא נתמכת בדפדפן הזה — אפשר להקליד");
+      addError("ההקלטה לא נתמכת בדפדפן הזה — אפשר להקליד");
       return;
     }
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "אין גישה למיקרופון — צריך לאשר הרשאה בדפדפן.", error: true }]);
+      addError("אין גישה למיקרופון — צריך לאשר הרשאה.");
       return;
     }
     const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
@@ -164,6 +214,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     rec.onstop = async () => {
       if (timerRef.current) clearInterval(timerRef.current);
       stream.getTracks().forEach((t) => t.stop());
+      buzz(30);
       const blob = new Blob(chunks, { type: used });
       if (blob.size < 1000) { setVoice("idle"); return; }
       setVoice("transcribing");
@@ -178,12 +229,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         send(data.text);
       } catch (e) {
         setVoice("idle");
-        const msg = e instanceof Error && e.message === "no_speech" ? "לא שמעתי דיבור בהקלטה — נסה שוב" : "התמלול נכשל — נסה שוב או הקלד";
-        setMessages((prev) => [...prev, { role: "assistant", content: msg, error: true }]);
+        addError(e instanceof Error && e.message === "no_speech" ? "לא שמעתי דיבור בהקלטה — נסה שוב" : "התמלול נכשל — נסה שוב או הקלד");
       }
     };
     recorderRef.current = rec;
     rec.start();
+    buzz(30);
     setRecSeconds(0);
     setVoice("recording");
     const t0 = Date.now();
@@ -192,12 +243,33 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       setRecSeconds(s);
       if (s >= MAX_REC_SEC && rec.state === "recording") rec.stop();
     }, 250);
-  }, [voice, isLoading, token, send]);
+  }, [voice, isLoading, token, send, addError]);
 
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   }, []);
+
+  // ── File: PDF / image → /api/v2/read-file → send its text as a message ──────
+  const handleFile = useCallback(async (picked: File) => {
+    if (fileBusy || isLoading) return;
+    setFileBusy(true);
+    try {
+      const file = await shrinkImage(picked);
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      const res = await fetch("/api/v2/read-file", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+      if (!res.ok || !data.text) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setFileBusy(false);
+      send(`צירפתי מסמך (${picked.name}). צור ממנו הצעת מחיר:\n\n${data.text}`, `📎 ${picked.name}`);
+    } catch (e) {
+      setFileBusy(false);
+      const code = e instanceof Error ? e.message : "";
+      addError(FILE_ERRORS[code] ?? "לא הצלחתי לקרוא את הקובץ — נסה שוב או תאר במילים");
+    }
+  }, [fileBusy, isLoading, token, send, addError]);
 
   // ── Manual edits ────────────────────────────────────────────────────────────
   const edit = useCallback((patch: Q) => setQuote((prev) => ({ ...prev, ...patch })), []);
@@ -213,7 +285,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setMessages([{ role: "assistant", content: greeting }]);
     setRestored(false);
     setSaveState("idle");
-    setMobileView("chat");
+    setChatOpen(false);
   }, [aiContext.user_id, greeting]);
 
   // ── Save to Bubble ──────────────────────────────────────────────────────────
@@ -245,117 +317,264 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   }, [saveState, token, quote, bubbleEnv, aiContext.user_id]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  const showPanel = hasQuote && (!isMobile || mobileView === "preview");
-  const showChat = !isMobile || !hasQuote || mobileView === "chat";
+  const composer = (
+    <Composer
+      input={input}
+      setInput={setInput}
+      onSend={handleSend}
+      onVoice={handleVoice}
+      onFile={handleFile}
+      voice={voice}
+      recSeconds={recSeconds}
+      busy={isLoading || fileBusy}
+      placeholder={hasQuote ? "מה לשנות?" : "כתוב, דבר או צרף מסמך"}
+    />
+  );
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
-      {isMobile && hasQuote && (
-        <div dir="rtl" style={{ flexShrink: 0, padding: "8px 14px", borderBottom: "1px solid #e8eaed", display: "flex", gap: 8 }}>
-          <TabButton active={mobileView === "chat"} onClick={() => setMobileView("chat")}>💬 שיחה</TabButton>
-          <TabButton active={mobileView === "preview"} onClick={() => { setMobileView("preview"); setUnseenUpdate(false); }}>
-            📋 ההצעה{unseenUpdate && <span style={{ marginInlineStart: 6, background: "#ec4899", color: "#fff", borderRadius: 10, padding: "0 7px", fontSize: 11 }}>עודכן</span>}
-          </TabButton>
+  const header = (
+    <div dir="rtl" style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid #e8eaed", display: "flex", alignItems: "center", gap: 10, color: "#1a1a2e" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{aiContext.company_name}</div>
+        <div style={{ fontSize: 12, color: "#6d28d9", marginTop: 2 }}>
+          הצעת מחיר עם AI{bubbleEnv === "test" && <span style={{ color: "#dc2626" }}> · מצב בדיקה</span>}
+        </div>
+      </div>
+      {started && <button onClick={startOver} style={{ ...chipStyle, fontSize: 12, padding: "6px 12px" }}>הצעה חדשה</button>}
+    </div>
+  );
+
+  const messageList = (
+    <div ref={messagesRef} dir="rtl" style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12, color: "#1a1a2e" }}>
+      {restored && (
+        <div style={{ alignSelf: "center", fontSize: 12, color: "#6b7280", background: "#f3f4f6", borderRadius: 12, padding: "4px 12px" }}>
+          שחזרנו את הטיוטה האחרונה שלך
         </div>
       )}
+      {messages.map((m, i) => <Bubble key={i} m={m} />)}
+      {fileBusy && <Bubble m={{ role: "assistant", content: "קורא את הקובץ..." }} />}
+    </div>
+  );
 
-      <div style={{ flex: 1, display: "flex", minHeight: 0, direction: "ltr" }}>
-        {/* LEFT: quote panel */}
-        {showPanel && (
-          <div style={{ width: isMobile ? "100%" : "46%", minWidth: isMobile ? 0 : 340, borderRight: isMobile ? "none" : "1px solid #e5e7eb", display: "flex", flexDirection: "column", minHeight: 0 }}>
-            <QuotePanelV2
-              quote={quote}
-              companyName={aiContext.company_name}
-              companyLogo={aiContext.company_logo}
-              onEdit={edit}
-              onEditClient={editClient}
-              onSetItems={setItems}
-              onSwitchMode={(m) => setQuote((prev) => switchMode(prev, m))}
-              onSave={handleSave}
-              saveState={saveState}
-              saveError={saveError}
-              isTest={bubbleEnv === "test"}
-            />
-          </div>
-        )}
+  const panel = (
+    <QuotePanelV2
+      quote={quote}
+      companyName={aiContext.company_name}
+      companyLogo={aiContext.company_logo}
+      onEdit={edit}
+      onEditClient={editClient}
+      onSetItems={setItems}
+      onSwitchMode={(m) => setQuote((prev) => switchMode(prev, m))}
+      onSave={handleSave}
+      saveState={saveState}
+      saveError={saveError}
+      isTest={bubbleEnv === "test"}
+      flash={flash}
+    />
+  );
 
-        {/* RIGHT: chat */}
-        {showChat && (
-          <div dir="rtl" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, color: "#1a1a2e" }}>
-            <div style={{ padding: "12px 18px", borderBottom: "1px solid #e8eaed", display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{aiContext.company_name}</div>
-                <div style={{ fontSize: 12, color: "#6d28d9", marginTop: 2 }}>
-                  הצעת מחיר עם AI{bubbleEnv === "test" && <span style={{ color: "#dc2626" }}> · מצב בדיקה (version-test)</span>}
-                </div>
-              </div>
+  // 1) Start screen — before anything was said
+  if (!started) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
+        {header}
+        <StartScreen
+          input={input}
+          setInput={setInput}
+          onSend={handleSend}
+          onVoice={handleVoice}
+          onFile={handleFile}
+          voice={voice}
+          recSeconds={recSeconds}
+          busy={isLoading || fileBusy}
+          error={messages.find((m) => m.error)?.content}
+        />
+      </div>
+    );
+  }
+
+  // 2) Mobile — the quote is the screen; the chat is a dock at the bottom
+  if (isMobile) {
+    const lastAi = [...messages].reverse().find((m) => m.role === "assistant");
+    const showChat = chatOpen || !hasQuote;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
+        {header}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          {showChat ? (
+            <>
               {hasQuote && (
-                <button onClick={startOver} style={{ ...chipStyle, fontSize: 12, padding: "6px 12px" }}>הצעה חדשה</button>
+                <button dir="rtl" onClick={() => setChatOpen(false)} style={{ flexShrink: 0, border: "none", borderBottom: "1px solid #f0f0f0", background: "#faf5ff", padding: "8px 16px", textAlign: "right", fontFamily: "inherit", fontSize: 13, color: PURPLE, cursor: "pointer" }}>
+                  ▾ חזרה להצעה
+                </button>
               )}
-            </div>
-
-            <div ref={messagesRef} style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
-              {restored && (
-                <div style={{ alignSelf: "center", fontSize: 12, color: "#6b7280", background: "#f3f4f6", borderRadius: 12, padding: "4px 12px" }}>
-                  שחזרנו את הטיוטה האחרונה שלך
-                </div>
+              {messageList}
+            </>
+          ) : panel}
+        </div>
+        <div dir="rtl" style={{ flexShrink: 0, borderTop: "1px solid #e8eaed", background: "#fafafa", padding: "8px 10px calc(10px + env(safe-area-inset-bottom))" }}>
+          {!showChat && lastAi && (
+            <button onClick={() => setChatOpen(true)} aria-label="פתיחת כל השיחה" style={{
+              display: "block", width: "100%", textAlign: "right", border: "1px solid #ede9fe", background: lastAi.error ? "#fef2f2" : "#fff",
+              borderRadius: 14, padding: "8px 12px", marginBottom: 8, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5,
+              color: lastAi.error ? "#b91c1c" : "#1a1a2e", cursor: "pointer",
+            }}>
+              {lastAi.loading ? <Dots /> : (
+                <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{lastAi.content}</span>
               )}
-              {messages.map((m, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-start" : "flex-end" }}>
-                  <div aria-live={m.role === "assistant" ? "polite" : undefined} style={{
-                    maxWidth: "85%", padding: "10px 16px", borderRadius: 18, fontSize: 15, lineHeight: 1.7,
-                    wordBreak: "break-word", whiteSpace: "pre-wrap",
-                    background: m.role === "user" ? "#eef1ff" : m.error ? "#fef2f2" : "#f5f0ff",
-                    color: m.error ? "#b91c1c" : "#1a1a2e",
-                  }}>
-                    {m.loading ? <Dots /> : m.content}
-                  </div>
-                </div>
-              ))}
-            </div>
+              <span style={{ display: "block", fontSize: 11, color: PURPLE, marginTop: 2 }}>▴ כל השיחה</span>
+            </button>
+          )}
+          {composer}
+        </div>
+      </div>
+    );
+  }
 
-            <div style={{ padding: "8px 14px 14px" }}>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, border: "1px solid #e2e6ea", borderRadius: 26, padding: "8px 12px", boxShadow: "0 1px 8px rgba(0,0,0,0.07)" }}>
-                <button
-                  onClick={handleVoice}
-                  disabled={voice === "transcribing" || isLoading}
-                  aria-label={voice === "recording" ? "עצור ושלח" : "הקלטה במקום הקלדה"}
-                  style={{ ...roundBtn, border: voice === "recording" ? "none" : "1px solid #e2e6ea", background: voice === "recording" ? "#dc2626" : "transparent", color: voice === "recording" ? "#fff" : "#6d28d9" }}
-                >{voice === "recording" ? "■" : "🎙"}</button>
-                {voice !== "idle" ? (
-                  <button
-                    onClick={handleVoice}
-                    disabled={voice === "transcribing"}
-                    style={{ flex: 1, minHeight: 34, border: "none", background: "transparent", textAlign: "right", fontFamily: "inherit", fontSize: 15, cursor: voice === "recording" ? "pointer" : "default", color: voice === "recording" ? "#dc2626" : "#6d28d9", display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    {voice === "recording"
-                      ? <>● מקליט {String(Math.floor(recSeconds / 60)).padStart(2, "0")}:{String(recSeconds % 60).padStart(2, "0")} — לחץ לעצירה ושליחה</>
-                      : <>מתמלל... <Dots /></>}
-                  </button>
-                ) : (
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                  onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 140) + "px"; }}
-                  placeholder={hasQuote ? "מה לשנות? למשל: תוסיף פינוי פסולת 500" : "למשל: ריצוף 20 מ\"ר ב-250 למ\"ר ופירוק 1500, לדני כהן בהרצל 5"}
-                  rows={1}
-                  disabled={isLoading}
-                  style={{ flex: 1, border: "none", outline: "none", resize: "none", fontSize: 16, lineHeight: 1.5, maxHeight: 140, direction: "rtl", fontFamily: "inherit", background: "transparent", color: "#1a1a2e" }}
-                />
-                )}
-                <button
-                  onClick={handleSend}
-                  onMouseDown={(e) => e.preventDefault()}
-                  disabled={isLoading || !input.trim()}
-                  aria-label="שלח"
-                  style={{ ...roundBtn, border: "none", background: input.trim() && !isLoading ? `linear-gradient(135deg, ${PURPLE}, #6d28d9)` : "#e8eaed", color: input.trim() && !isLoading ? "#fff" : "#9ca3af" }}
-                >←</button>
-              </div>
-            </div>
+  // 3) Desktop — quote and chat side by side
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", minHeight: 0, direction: "ltr" }}>
+        {hasQuote && (
+          <div style={{ width: "46%", minWidth: 340, borderRight: "1px solid #e5e7eb", display: "flex", flexDirection: "column", minHeight: 0 }}>
+            {panel}
           </div>
         )}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+          {header}
+          {messageList}
+          <div dir="rtl" style={{ padding: "8px 14px 14px" }}>{composer}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Start screen ──────────────────────────────────────────────────────────────
+function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSeconds, busy, error }: {
+  input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onFile: (f: File) => void;
+  voice: Voice; recSeconds: number; busy: boolean; error?: string;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const recording = voice === "recording";
+  const working = busy || voice === "transcribing";
+  return (
+    <div dir="rtl" style={{ flex: 1, overflowY: "auto", color: "#1a1a2e" }}>
+      <div style={{ maxWidth: 560, margin: "0 auto", padding: "22px 18px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>הצעת מחיר חדשה</div>
+          <div style={{ fontSize: 14, color: "#6b7280", marginTop: 4, lineHeight: 1.6 }}>כתוב למי ההצעה, מה כלול וכמה זה עולה — ואנחנו ניצור לך את ההצעה.</div>
+        </div>
+
+        <div style={{ border: "1px solid #ddd6fe", borderRadius: 18, padding: 12, background: "#fff", boxShadow: "0 1px 8px rgba(124,58,237,0.08)" }}>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={'למשל: לדני כהן מחולון — ריצוף 20 מ"ר ב-250 למ"ר, פינוי פסולת 400'}
+            rows={4}
+            disabled={working || recording}
+            style={{ width: "100%", border: "none", outline: "none", resize: "none", fontSize: 16, lineHeight: 1.6, fontFamily: "inherit", direction: "rtl", background: "transparent", color: "#1a1a2e", boxSizing: "border-box" }}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={onSend} disabled={!input.trim() || working} style={{
+              padding: "10px 22px", borderRadius: 24, border: "none", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: input.trim() ? "pointer" : "default",
+              background: input.trim() && !working ? `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})` : "#e8eaed", color: input.trim() && !working ? "#fff" : "#9ca3af",
+            }}>צור הצעה ←</button>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {EXAMPLES.map((ex) => (
+            <button key={ex.label} onClick={() => setInput(ex.text)} disabled={working} style={{ ...chipStyle, fontSize: 13, background: "#f5f3ff", border: "none" }}>{ex.label}</button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#9ca3af", fontSize: 13 }}>
+          <div style={{ flex: 1, height: 1, background: "#eee" }} />או<div style={{ flex: 1, height: 1, background: "#eee" }} />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          <button onClick={onVoice} disabled={working} aria-label={recording ? "עצור ושלח" : "הקלטה"} style={{
+            width: 84, height: 84, borderRadius: "50%", border: "none", cursor: working ? "default" : "pointer", fontSize: 34, color: "#fff",
+            background: recording ? "#dc2626" : `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`,
+            boxShadow: recording ? "0 0 0 10px #fee2e2" : "0 4px 14px rgba(124,58,237,0.35)", transition: "box-shadow .3s",
+          }}>{recording ? "■" : voice === "transcribing" ? <Dots light /> : "🎙"}</button>
+          <div style={{ fontSize: 14, color: recording ? "#dc2626" : "#4b5563", fontWeight: recording ? 700 : 400 }}>
+            {recording ? `מקליט ${mmss(recSeconds)} — לחץ לסיום` : voice === "transcribing" ? "מתמלל..." : "לחץ ודבר — ספר על העבודה"}
+          </div>
+        </div>
+
+        <button onClick={() => fileRef.current?.click()} disabled={working || recording} style={{
+          display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "14px 16px", borderRadius: 14,
+          border: "1.5px dashed #c4b5fd", background: "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "right", color: "#1a1a2e",
+        }}>
+          <span style={{ fontSize: 24 }}>📎</span>
+          <span>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 600 }}>{busy ? "קורא את הקובץ..." : "יש לך מסמך או תמונה?"}</span>
+            <span style={{ display: "block", fontSize: 12, color: "#6b7280" }}>הצעה ישנה, כתב יד, צילום מסך — PDF או תמונה</span>
+          </span>
+        </button>
+        <input ref={fileRef} type="file" accept="application/pdf,image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
+
+        {error && <div style={{ fontSize: 13, color: "#b91c1c", background: "#fef2f2", borderRadius: 10, padding: "8px 12px" }}>{error}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Composer (chat input with mic + attach) ───────────────────────────────────
+function Composer({ input, setInput, onSend, onVoice, onFile, voice, recSeconds, busy, placeholder }: {
+  input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onFile: (f: File) => void;
+  voice: Voice; recSeconds: number; busy: boolean; placeholder: string;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const recording = voice === "recording";
+  const canSend = !!input.trim() && !busy;
+  const submit = () => { onSend(); if (taRef.current) taRef.current.style.height = "auto"; };
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, border: "1px solid #e2e6ea", borderRadius: 26, padding: "6px 8px", background: "#fff", boxShadow: "0 1px 8px rgba(0,0,0,0.06)" }}>
+      <button onClick={() => fileRef.current?.click()} disabled={busy || voice !== "idle"} aria-label="צירוף מסמך או תמונה" style={{ ...roundBtn, border: "none", background: "transparent", color: "#6b7280" }}>📎</button>
+      <input ref={fileRef} type="file" accept="application/pdf,image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
+      {voice !== "idle" ? (
+        <button onClick={onVoice} disabled={voice === "transcribing"} style={{ flex: 1, minHeight: 40, border: "none", background: "transparent", textAlign: "right", fontFamily: "inherit", fontSize: 15, cursor: recording ? "pointer" : "default", color: recording ? "#dc2626" : "#6d28d9", display: "flex", alignItems: "center", gap: 8 }}>
+          {recording ? <>● מקליט {mmss(recSeconds)} — לחץ לסיום</> : <>מתמלל... <Dots /></>}
+        </button>
+      ) : (
+        <textarea
+          ref={taRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && window.innerWidth >= 768) { e.preventDefault(); if (canSend) submit(); } }}
+          onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }}
+          placeholder={placeholder}
+          rows={1}
+          disabled={busy}
+          style={{ flex: 1, alignSelf: "center", border: "none", outline: "none", resize: "none", fontSize: 16, lineHeight: 1.5, maxHeight: 120, direction: "rtl", fontFamily: "inherit", background: "transparent", color: "#1a1a2e", padding: "6px 0" }}
+        />
+      )}
+      {canSend && voice === "idle" ? (
+        <button onClick={submit} onMouseDown={(e) => e.preventDefault()} aria-label="שלח" style={{ ...roundBtn, width: 40, height: 40, border: "none", background: `linear-gradient(135deg, ${PURPLE}, #6d28d9)`, color: "#fff" }}>←</button>
+      ) : (
+        <button onClick={onVoice} disabled={voice === "transcribing" || busy} aria-label={recording ? "עצור ושלח" : "הקלטה"} style={{
+          ...roundBtn, width: 40, height: 40, border: "none", fontSize: 18,
+          background: recording ? "#dc2626" : `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`, color: "#fff",
+          boxShadow: recording ? "0 0 0 5px #fee2e2" : "none",
+        }}>{recording ? "■" : "🎙"}</button>
+      )}
+    </div>
+  );
+}
+
+function Bubble({ m }: { m: ChatMessage }) {
+  return (
+    <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-start" : "flex-end" }}>
+      <div aria-live={m.role === "assistant" ? "polite" : undefined} style={{
+        maxWidth: "85%", padding: "10px 16px", borderRadius: 18, fontSize: 15, lineHeight: 1.7,
+        wordBreak: "break-word", whiteSpace: "pre-wrap",
+        background: m.role === "user" ? "#eef1ff" : m.error ? "#fef2f2" : "#f5f0ff",
+        color: m.error ? "#b91c1c" : "#1a1a2e",
+      }}>
+        {m.loading ? <Dots /> : (m.display ?? m.content)}
       </div>
     </div>
   );
@@ -363,7 +582,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
 // ── Quote panel ───────────────────────────────────────────────────────────────
 function QuotePanelV2({
-  quote, companyName, companyLogo, onEdit, onEditClient, onSetItems, onSwitchMode, onSave, saveState, saveError, isTest,
+  quote, companyName, companyLogo, onEdit, onEditClient, onSetItems, onSwitchMode, onSave, saveState, saveError, isTest, flash,
 }: {
   quote: Q;
   companyName: string;
@@ -376,6 +595,7 @@ function QuotePanelV2({
   saveState: SaveState;
   saveError: string;
   isTest: boolean;
+  flash: number[];
 }) {
   const perItem = quote.pricing_mode === "per_item";
   const items = quote.items ?? [];
@@ -452,7 +672,10 @@ function QuotePanelV2({
         {/* Items */}
         <div style={{ marginBottom: 8 }}>
           {items.map((it, i) => (
-            <div key={i} style={{ padding: "10px 0", borderBottom: "1px solid #f3f4f6" }}>
+            <div key={i} style={{
+              padding: "10px 6px", margin: "0 -6px", borderBottom: "1px solid #f3f4f6", borderRadius: 8, transition: "background-color .6s",
+              background: flash.includes(i) ? FLASH_BG : perItem && !it.unit_price ? MISSING_BG : "transparent",
+            }}>
               {editingIdx === i ? (
                 <ItemEditor
                   item={it}
@@ -468,7 +691,7 @@ function QuotePanelV2({
                     {it.description && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2, lineHeight: 1.5 }}>{it.description}</div>}
                     {perItem && (
                       <div style={{ fontSize: 12, color: "#4b5563", marginTop: 4, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                        <span>{formatQty(it.quantity)} {it.unit} × {it.unit_price ? formatILS(it.unit_price) : <span style={{ color: "#d97706" }}>חסר מחיר</span>}</span>
+                        <span>{formatQty(it.quantity)} {it.unit} × {it.unit_price ? formatILS(it.unit_price) : <span style={{ color: "#b45309", fontWeight: 700 }}>+ הוסף מחיר</span>}</span>
                         <span style={{ fontWeight: 700, color: "#111827" }}>{formatILS(lineTotal(it))}</span>
                       </div>
                     )}
@@ -654,22 +877,11 @@ function SmallBtn({ children, onClick, label, disabled, danger }: { children: Re
   );
 }
 
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} style={{
-      flex: 1, padding: "9px 0", borderRadius: 20, fontSize: 14, fontWeight: 700, cursor: "pointer",
-      border: active ? "none" : "1px solid #e5e7eb",
-      background: active ? `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})` : "#fff",
-      color: active ? "#fff" : "#4b5563",
-    }}>{children}</button>
-  );
-}
-
-function Dots() {
+function Dots({ light }: { light?: boolean }) {
   return (
     <span aria-label="חושב" style={{ display: "inline-flex", gap: 4 }}>
       <style>{`@keyframes v2dot{0%,100%{opacity:.2}50%{opacity:1}}`}</style>
-      {[0, 1, 2].map((i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: PURPLE, animation: `v2dot 1.2s ${i * 0.2}s infinite` }} />)}
+      {[0, 1, 2].map((i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: light ? "#fff" : PURPLE, animation: `v2dot 1.2s ${i * 0.2}s infinite` }} />)}
     </span>
   );
 }
