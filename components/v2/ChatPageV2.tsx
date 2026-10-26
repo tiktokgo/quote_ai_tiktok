@@ -41,13 +41,14 @@ const EXAMPLES = [
 
 // ── Draft persistence (survives a refresh of the Bubble iframe) ───────────────
 const draftKey = (userId?: string) => `quote_v2_draft:${userId ?? "anon"}`;
-function loadDraft(userId?: string): { messages: ChatMessage[]; quote: Q } | null {
+interface Draft { messages: ChatMessage[]; quote: Q; at: number }
+function loadDraft(userId?: string): Draft | null {
   try {
     const raw = localStorage.getItem(draftKey(userId));
     if (!raw) return null;
     const d = JSON.parse(raw) as { messages: ChatMessage[]; quote: Q; at: number };
     if (Date.now() - d.at > 3 * 24 * 3600 * 1000) return null; // older than 3 days
-    return { messages: d.messages.filter((m) => !m.loading), quote: d.quote };
+    return { messages: d.messages.filter((m) => !m.loading), quote: d.quote, at: d.at };
   } catch {
     return null;
   }
@@ -62,6 +63,12 @@ function clearDraft(userId?: string) {
 }
 
 const buzz = (ms: number | number[]) => { try { navigator.vibrate?.(ms); } catch { /* iOS: not supported */ } };
+const timeAgo = (at: number) => {
+  const min = Math.round((Date.now() - at) / 60000);
+  if (min < 60) return min <= 1 ? "לפני דקה" : `לפני ${min} דקות`;
+  const h = Math.round(min / 60);
+  return h < 24 ? (h === 1 ? "לפני שעה" : `לפני ${h} שעות`) : h < 48 ? "אתמול" : `לפני ${Math.round(h / 24)} ימים`;
+};
 const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
 /** Phone photos are often 3–8MB; resize to fit the 4MB request limit and keep the text readable. */
@@ -99,6 +106,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState("");
   const [restored, setRestored] = useState(false);
+  const [pendingDraft, setPendingDraft] = useState<Draft | null>(null); // offered on the start screen, not auto-opened
+  const [confirmNew, setConfirmNew] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
   const [flash, setFlash] = useState<number[]>([]);
 
@@ -112,14 +122,10 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const [voice, setVoice] = useState<Voice>("idle");
   const [recSeconds, setRecSeconds] = useState(0);
 
-  // Restore a draft once on mount
+  // A saved draft is offered on the start screen ("continue" / "start new") — never opened by itself.
   useEffect(() => {
     const d = loadDraft(aiContext.user_id);
-    if (d && (d.quote.items?.length || d.quote.title)) {
-      setMessages(d.messages.length ? d.messages : [{ role: "assistant", content: greeting }]);
-      setQuote(d.quote);
-      setRestored(true);
-    }
+    if (d && (d.quote.items?.length || d.quote.title)) setPendingDraft(d);
     setIsMobile(window.innerWidth < 768);
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
@@ -278,15 +284,37 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const setItems = useCallback((fn: (items: QuoteItemV2[]) => QuoteItemV2[]) =>
     setQuote((prev) => ({ ...prev, items: fn(prev.items ?? []) })), []);
 
+  const resumeDraft = useCallback(() => {
+    if (!pendingDraft) return;
+    setMessages(pendingDraft.messages.length ? pendingDraft.messages : [{ role: "assistant", content: greeting }]);
+    setQuote(pendingDraft.quote);
+    setRestored(true);
+    setPendingDraft(null);
+  }, [pendingDraft, greeting]);
+
+  const discardDraft = useCallback(() => {
+    clearDraft(aiContext.user_id);
+    setPendingDraft(null);
+  }, [aiContext.user_id]);
+
+  // Two taps instead of confirm(): the BDK app's WebView blocks JS dialogs, so confirm() always returned false.
   const startOver = useCallback(() => {
-    if (!confirm("להתחיל הצעה חדשה? הטיוטה הנוכחית תימחק.")) return;
+    if (!confirmNew) {
+      setConfirmNew(true);
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      confirmTimer.current = setTimeout(() => setConfirmNew(false), 4000);
+      return;
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    setConfirmNew(false);
     clearDraft(aiContext.user_id);
     setQuote({});
     setMessages([{ role: "assistant", content: greeting }]);
     setRestored(false);
     setSaveState("idle");
     setChatOpen(false);
-  }, [aiContext.user_id, greeting]);
+    setInput("");
+  }, [confirmNew, aiContext.user_id, greeting]);
 
   // ── Save to Bubble ──────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
@@ -339,7 +367,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
           הצעת מחיר עם AI{bubbleEnv === "test" && <span style={{ color: "#dc2626" }}> · מצב בדיקה</span>}
         </div>
       </div>
-      {started && <button onClick={startOver} style={{ ...chipStyle, fontSize: 12, padding: "6px 12px" }}>הצעה חדשה</button>}
+      {started && (
+        <button onClick={startOver} style={{
+          ...chipStyle, fontSize: 12, padding: "6px 12px",
+          ...(confirmNew ? { background: "#dc2626", color: "#fff", border: "1px solid #dc2626" } : {}),
+        }}>{confirmNew ? "למחוק ולהתחיל? לחץ שוב" : "הצעה חדשה"}</button>
+      )}
     </div>
   );
 
@@ -387,6 +420,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
           recSeconds={recSeconds}
           busy={isLoading || fileBusy}
           error={messages.find((m) => m.error)?.content}
+          draft={pendingDraft}
+          onResume={resumeDraft}
+          onDiscard={discardDraft}
         />
       </div>
     );
@@ -450,9 +486,10 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 }
 
 // ── Start screen ──────────────────────────────────────────────────────────────
-function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSeconds, busy, error }: {
+function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSeconds, busy, error, draft, onResume, onDiscard }: {
   input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onFile: (f: File) => void;
   voice: Voice; recSeconds: number; busy: boolean; error?: string;
+  draft: Draft | null; onResume: () => void; onDiscard: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const recording = voice === "recording";
@@ -460,6 +497,18 @@ function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSecon
   return (
     <div dir="rtl" style={{ flex: 1, overflowY: "auto", color: "#1a1a2e" }}>
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "22px 18px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
+        {draft && (
+          <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 14, padding: "12px 14px" }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>יש לך טיוטה שלא נשמרה</div>
+            <div style={{ fontSize: 13, color: "#4b5563", marginTop: 2 }}>
+              {[draft.quote.title || draft.quote.client?.name, `${draft.quote.items?.length ?? 0} פריטים`, timeAgo(draft.at)].filter(Boolean).join(" · ")}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button onClick={onResume} style={{ ...chipStyle, background: PURPLE, color: "#fff", border: "none", fontSize: 13 }}>המשך בטיוטה</button>
+              <button onClick={onDiscard} style={{ ...chipStyle, fontSize: 13, color: "#6b7280" }}>מחק</button>
+            </div>
+          </div>
+        )}
         <div>
           <div style={{ fontSize: 22, fontWeight: 800 }}>הצעת מחיר חדשה</div>
           <div style={{ fontSize: 14, color: "#6b7280", marginTop: 4, lineHeight: 1.6 }}>כתוב למי ההצעה, מה כלול וכמה זה עולה — ואנחנו ניצור לך את ההצעה.</div>
