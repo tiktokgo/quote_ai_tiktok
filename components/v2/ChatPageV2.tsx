@@ -69,8 +69,10 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const [isListening, setIsListening] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [voice, setVoice] = useState<"idle" | "recording" | "transcribing">("idle");
+  const [recSeconds, setRecSeconds] = useState(0);
 
   // Restore a draft once on mount
   useEffect(() => {
@@ -136,27 +138,66 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     send(t);
   }, [input, send]);
 
-  // ── Voice (browser speech-to-text) ──────────────────────────────────────────
-  const handleVoice = useCallback(() => {
-    const W = window as unknown as { SpeechRecognition?: typeof SpeechRecognition; webkitSpeechRecognition?: typeof SpeechRecognition };
-    const SR = W.SpeechRecognition ?? W.webkitSpeechRecognition;
-    if (!SR) { alert("הדפדפן לא תומך בזיהוי קול — אפשר להקליד"); return; }
-    if (isListening) { recognitionRef.current?.stop(); return; }
-    const rec = new SR();
-    rec.lang = "he-IL";
-    rec.interimResults = false;
-    rec.continuous = true;
-    rec.onstart = () => setIsListening(true);
-    rec.onend = () => setIsListening(false);
-    rec.onerror = () => setIsListening(false);
-    rec.onresult = (e: SpeechRecognitionEvent) => {
-      let t = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0]?.transcript ?? "";
-      if (t) setInput((prev) => (prev ? prev + " " : "") + t.trim());
+  // ── Voice: record (MediaRecorder) → /api/v2/transcribe → send as a message ──
+  // Same approach as the Bubble voice_test page, which worked on desktop, mobile and the app.
+  const MAX_REC_SEC = 180;
+  const handleVoice = useCallback(async () => {
+    if (voice === "transcribing" || isLoading) return;
+    if (voice === "recording") { recorderRef.current?.stop(); return; }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      alert("ההקלטה לא נתמכת בדפדפן הזה — אפשר להקליד");
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setMessages((prev) => [...prev, { role: "assistant", content: "אין גישה למיקרופון — צריך לאשר הרשאה בדפדפן.", error: true }]);
+      return;
+    }
+    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+    const type = types.find((t) => MediaRecorder.isTypeSupported?.(t)) ?? "";
+    const rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
+    const used = rec.mimeType || type || "audio/mp4";
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(chunks, { type: used });
+      if (blob.size < 1000) { setVoice("idle"); return; }
+      setVoice("transcribing");
+      try {
+        const ext = used.includes("mp4") ? "mp4" : used.includes("ogg") ? "ogg" : "webm";
+        const fd = new FormData();
+        fd.append("audio", blob, `recording.${ext}`);
+        const res = await fetch("/api/v2/transcribe", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+        const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+        if (!res.ok || !data.text) throw new Error(data.error ?? `HTTP ${res.status}`);
+        setVoice("idle");
+        send(data.text);
+      } catch (e) {
+        setVoice("idle");
+        const msg = e instanceof Error && e.message === "no_speech" ? "לא שמעתי דיבור בהקלטה — נסה שוב" : "התמלול נכשל — נסה שוב או הקלד";
+        setMessages((prev) => [...prev, { role: "assistant", content: msg, error: true }]);
+      }
     };
-    recognitionRef.current = rec;
+    recorderRef.current = rec;
     rec.start();
-  }, [isListening]);
+    setRecSeconds(0);
+    setVoice("recording");
+    const t0 = Date.now();
+    timerRef.current = setInterval(() => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      setRecSeconds(s);
+      if (s >= MAX_REC_SEC && rec.state === "recording") rec.stop();
+    }, 250);
+  }, [voice, isLoading, token, send]);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+  }, []);
 
   // ── Manual edits ────────────────────────────────────────────────────────────
   const edit = useCallback((patch: Q) => setQuote((prev) => ({ ...prev, ...patch })), []);
@@ -277,9 +318,21 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
               <div style={{ display: "flex", alignItems: "flex-end", gap: 8, border: "1px solid #e2e6ea", borderRadius: 26, padding: "8px 12px", boxShadow: "0 1px 8px rgba(0,0,0,0.07)" }}>
                 <button
                   onClick={handleVoice}
-                  aria-label={isListening ? "עצור הקלטה" : "דבר במקום להקליד"}
-                  style={{ ...roundBtn, border: isListening ? "1px solid #fca5a5" : "1px solid #e2e6ea", background: isListening ? "#fee2e2" : "transparent", color: isListening ? "#dc2626" : "#6d28d9" }}
-                >{isListening ? "■" : "🎙"}</button>
+                  disabled={voice === "transcribing" || isLoading}
+                  aria-label={voice === "recording" ? "עצור ושלח" : "הקלטה במקום הקלדה"}
+                  style={{ ...roundBtn, border: voice === "recording" ? "none" : "1px solid #e2e6ea", background: voice === "recording" ? "#dc2626" : "transparent", color: voice === "recording" ? "#fff" : "#6d28d9" }}
+                >{voice === "recording" ? "■" : "🎙"}</button>
+                {voice !== "idle" ? (
+                  <button
+                    onClick={handleVoice}
+                    disabled={voice === "transcribing"}
+                    style={{ flex: 1, minHeight: 34, border: "none", background: "transparent", textAlign: "right", fontFamily: "inherit", fontSize: 15, cursor: voice === "recording" ? "pointer" : "default", color: voice === "recording" ? "#dc2626" : "#6d28d9", display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    {voice === "recording"
+                      ? <>● מקליט {String(Math.floor(recSeconds / 60)).padStart(2, "0")}:{String(recSeconds % 60).padStart(2, "0")} — לחץ לעצירה ושליחה</>
+                      : <>מתמלל... <Dots /></>}
+                  </button>
+                ) : (
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -291,6 +344,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
                   disabled={isLoading}
                   style={{ flex: 1, border: "none", outline: "none", resize: "none", fontSize: 16, lineHeight: 1.5, maxHeight: 140, direction: "rtl", fontFamily: "inherit", background: "transparent", color: "#1a1a2e" }}
                 />
+                )}
                 <button
                   onClick={handleSend}
                   onMouseDown={(e) => e.preventDefault()}
