@@ -31,7 +31,12 @@ export async function POST(req: NextRequest) {
   const events: TrackEvent[] = (Array.isArray(body.events) ? body.events : [])
     .slice(0, 20)
     .filter((e) => typeof e?.event === "string" && EVENTS.has(e.event))
-    .map((e) => ({ event: e.event!, user_id: v.payload.user_id, session_id: body.session_id, props: cleanProps(e.props) }));
+    .map((e) => {
+      const props = cleanProps(e.props);
+      // The business's own name (from the signed token, not the page) — once per visit, so the views can show who it is.
+      if (e.event === "opened") props.company = (v.payload.company_name ?? "").slice(0, 60);
+      return { event: e.event!, user_id: v.payload.user_id, session_id: body.session_id, props };
+    });
   if (events.length) after(() => track(...events));
   return Response.json({ ok: true });
 }
