@@ -48,8 +48,8 @@ const UPDATE_QUOTE_TOOL: OpenAI.Chat.ChatCompletionTool = {
           },
         },
         total: { type: "number", description: "total mode only: the one price the user said, in ILS" },
-        has_tax: { type: "boolean", description: "The quote has 18% VAT (both modes)." },
-        vat_included: { type: "boolean", description: "total mode only: true when the user said the price already INCLUDES VAT ('כולל מע\"מ'); false when VAT is added on top" },
+        has_tax: { type: "boolean", description: "Add 18% VAT on top of the prices (both modes)." },
+        price_includes_vat: { type: "boolean", description: "true when the user said the prices in THIS message already INCLUDE VAT ('כולל מע\"מ'). Send the prices exactly as said — the system converts them. Never compute it yourself." },
         discount_amount: { type: "number", description: "Discount in ILS (both modes). Never change pricing_mode because of a discount." },
         discount_percent: { type: "number", description: "When the user said a percentage (both modes)" },
         warranty: { type: "string" },
@@ -79,7 +79,7 @@ function nextQuestion(q: Partial<QuoteV2>): string {
   if (!q.client?.name) return "מה שם הלקוח?";
   if (!q.client?.address) return "ומה הכתובת?";
   if (q.pricing_mode !== "per_item" && !q.total) return "מה המחיר? אפשר סכום אחד לכל העבודה, או מחיר לכל פריט.";
-  if (q.has_tax === undefined) return q.pricing_mode === "per_item" ? "האם להוסיף מע״מ?" : "להוסיף מע״מ על המחיר, או שהוא כבר כולל מע״מ?";
+  if (q.has_tax === undefined) return "האם להוסיף מע״מ?";
   return "הצעת המחיר מוכנה — עיין בה, ואפשר לשנות כל דבר בקול או בטקסט.";
 }
 

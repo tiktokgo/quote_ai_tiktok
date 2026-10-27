@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { AIContext } from "@/lib/verifyToken";
 import {
   UNITS, DEFAULT_UNIT, computeTotals, lineTotal, mergeQuoteV2, switchMode, normalizeItem,
-  formatILS, formatQty,
+  formatILS, formatQty, exVat,
 } from "@/lib/v2/quote";
 import type { QuoteV2, QuoteItemV2, QuoteUpdateV2, PricingMode } from "@/lib/v2/quote";
 
@@ -1065,7 +1065,7 @@ function QuotePanelV2({
           ) : (
             <>
               <Row
-                label={quote.has_tax && quote.vat_included ? "מחיר (כולל מע״מ)" : "מחיר"}
+                label={quote.has_tax ? "מחיר לפני מע״מ" : "מחיר"}
                 value={<NumberEdit value={quote.total ?? 0} onChange={(n) => onEdit({ total: n })} render={(n) => (n ? formatILS(n) : "עדכון מחיר ✏️")} />}
               />
               <Row
@@ -1081,11 +1081,10 @@ function QuotePanelV2({
             <input type="checkbox" checked={!!quote.has_tax} onChange={(e) => onEdit({ has_tax: e.target.checked })} style={{ accentColor: PURPLE }} />
             להוסיף מע״מ 18%
           </label>
-          {!perItem && quote.has_tax && (
-            <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, marginRight: 20, fontSize: 12, color: "#4b5563", cursor: "pointer" }}>
-              <input type="checkbox" checked={!!quote.vat_included} onChange={(e) => onEdit({ vat_included: e.target.checked })} style={{ accentColor: PURPLE }} />
-              המחיר שכתבתי כבר כולל מע״מ
-            </label>
+          {!perItem && (quote.total ?? 0) > 0 && (
+            <button onClick={() => onEdit({ total: exVat(quote.total ?? 0), has_tax: true })} style={{ ...chipStyle, display: "block", marginTop: 8, fontSize: 12, padding: "5px 12px", background: "#fff" }}>
+              המחיר כולל מע״מ — הורד מע״מ ({formatILS(exVat(quote.total ?? 0))})
+            </button>
           )}
         </div>
 
@@ -1192,8 +1191,13 @@ function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
           <select aria-label="יחידה" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} style={{ ...inputStyle, width: 80 }}>
             {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
           </select>
-          <input aria-label="מחיר ליחידה" inputMode="decimal" placeholder="מחיר ליחידה" value={d.unit_price} onChange={(e) => setD({ ...d, unit_price: e.target.value })} style={{ ...inputStyle, flex: 1 }} />
+          <input aria-label="מחיר ליחידה לפני מע״מ" inputMode="decimal" placeholder="מחיר ליחידה לפני מע״מ" value={d.unit_price} onChange={(e) => setD({ ...d, unit_price: e.target.value })} style={{ ...inputStyle, flex: 1 }} />
         </div>
+      )}
+      {perItem && parse(d.unit_price) > 0 && (
+        <button onClick={() => setD({ ...d, unit_price: String(exVat(parse(d.unit_price))) })} style={{ ...chipStyle, alignSelf: "flex-start", fontSize: 12, padding: "5px 12px" }}>
+          המחיר כולל מע״מ — הורד מע״מ ({formatILS(exVat(parse(d.unit_price)))})
+        </button>
       )}
       <div style={{ display: "flex", gap: 6 }}>
         <button onClick={done} style={{ ...chipStyle, background: PURPLE, color: "#fff", border: "none" }}>שמירה</button>
