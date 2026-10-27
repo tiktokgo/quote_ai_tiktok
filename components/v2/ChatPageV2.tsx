@@ -893,7 +893,8 @@ function QuotePanelV2({
           {items.map((it, i) => (
             <div key={i} data-row style={{
               padding: "10px 6px", margin: "0 -6px", borderBottom: "1px solid #f3f4f6", borderRadius: 8,
-              position: "relative", zIndex: drag?.from === i ? 2 : 1,
+              // Raised only while dragging — otherwise rows would paint over the sticky save bar.
+              position: "relative", zIndex: drag?.from === i ? 2 : undefined,
               transform: `translateY(${drag?.from === i ? drag.dy : rowShift(i)}px)`,
               transition: drag?.from === i ? "background-color .6s" : "transform .15s, background-color .6s",
               boxShadow: drag?.from === i ? "0 6px 18px rgba(0,0,0,0.15)" : "none",
@@ -1013,7 +1014,7 @@ function QuotePanelV2({
       </div>
 
       {/* Save */}
-      <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(to top, #fff 75%, transparent)", padding: "14px 18px 18px", textAlign: "center" }}>
+      <div style={{ position: "sticky", bottom: 0, zIndex: 5, background: "#fff", borderTop: "1px solid #f0f0f0", boxShadow: "0 -8px 16px rgba(255,255,255,0.9)", padding: "12px 18px 16px", textAlign: "center" }}>
         <button
           onClick={onSave}
           disabled={!canSave || saveState === "saving" || saveState === "saved"}
