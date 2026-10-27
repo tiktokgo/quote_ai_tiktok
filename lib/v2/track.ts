@@ -53,7 +53,8 @@ export async function track(...events: TrackEvent[]): Promise<void> {
   try {
     const res = await fetch(`${url.replace(/\/$/, "")}/rest/v1/v2_events`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", apikey: key, Authorization: `Bearer ${key}`, Prefer: "return=minimal" },
+      // New Supabase secret keys (sb_secret_…) go in `apikey` only; a legacy service_role JWT also as Bearer.
+      headers: { "Content-Type": "application/json", apikey: key, ...(key.startsWith("eyJ") ? { Authorization: `Bearer ${key}` } : {}), Prefer: "return=minimal" },
       body: JSON.stringify(events.map((e) => ({
         event: e.event.slice(0, 40),
         user_id: e.user_id ?? null,
