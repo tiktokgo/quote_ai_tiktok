@@ -40,8 +40,11 @@ export interface QuoteV2 {
   items: QuoteItemV2[];
   /** total mode only: the one price the user said */
   total: number;
+  /** add 18% VAT on top (the old /chat and Bubble meaning, in both modes) */
   has_tax: boolean;
-  /** per_item only, in ₪ */
+  /** total mode only: the said price already includes VAT — Bubble gets it split back to before-VAT */
+  vat_included?: boolean;
+  /** in ₪, both modes */
   discount_amount: number;
   warranty: string;
   terms: string;
@@ -54,7 +57,7 @@ export interface QuoteV2 {
 export type QuoteUpdateV2 = Partial<Omit<QuoteV2, "client" | "items">> & {
   client?: Partial<ClientV2>;
   items?: Partial<QuoteItemV2>[];
-  /** per_item only; converted to discount_amount here */
+  /** converted to discount_amount here */
   discount_percent?: number;
   /** Related items the user did NOT mention — shown as "add?" chips, never put in the quote by themselves. */
   suggested_items?: { name: string; description?: string }[];
@@ -101,9 +104,8 @@ export interface Totals {
 }
 
 /**
- * per_item: VAT is added on top of the lines (after discount) when has_tax.
- * total:    the said total is the final amount — nothing is added or subtracted
- *           (same behaviour as the existing /chat flow).
+ * Both modes: discount first, then 18% VAT on top when has_tax (same as Bubble).
+ * total + vat_included: the said price (after discount) is the final amount and VAT is split out of it.
  */
 export function computeTotals(q: Partial<QuoteV2>): Totals {
   if (q.pricing_mode === "per_item") {
@@ -118,11 +120,15 @@ export function computeTotals(q: Partial<QuoteV2>): Totals {
       missingPrices: items.filter((it) => !it.unit_price).length,
     };
   }
-  // total mode: the said amount is final. With has_tax ("the price includes VAT") we only
-  // show how it splits — nothing is added on top.
   const total = Math.max(0, q.total ?? 0);
-  const beforeVat = q.has_tax ? round2(total / (1 + VAT_RATE)) : total;
-  return { subtotal: total, discount: 0, beforeVat, vat: round2(total - beforeVat), grandTotal: total, missingPrices: 0 };
+  const discount = round2(Math.min(Math.max(0, q.discount_amount ?? 0), total));
+  const after = round2(total - discount);
+  if (q.has_tax && q.vat_included) {
+    const beforeVat = round2(after / (1 + VAT_RATE));
+    return { subtotal: total, discount, beforeVat, vat: round2(after - beforeVat), grandTotal: after, missingPrices: 0 };
+  }
+  const vat = q.has_tax ? round2(after * VAT_RATE) : 0;
+  return { subtotal: total, discount, beforeVat: after, vat, grandTotal: round2(after + vat), missingPrices: 0 };
 }
 
 /** Merge an AI update into the current quote. Items are always replaced as a full list. */
@@ -133,6 +139,7 @@ export function mergeQuoteV2(current: Partial<QuoteV2>, update: QuoteUpdateV2): 
     if (typeof update[k] === "string") m[k] = update[k] as string;
   }
   if (typeof update.has_tax === "boolean") m.has_tax = update.has_tax;
+  if (typeof update.vat_included === "boolean") m.vat_included = update.vat_included;
   if (update.total !== undefined) m.total = Math.max(0, num(update.total, 0));
   if (update.items !== undefined && Array.isArray(update.items)) {
     m.items = update.items.map(normalizeItem).filter((it) => it.name);
@@ -140,24 +147,22 @@ export function mergeQuoteV2(current: Partial<QuoteV2>, update: QuoteUpdateV2): 
   if (update.client) m.client = { ...(current.client ?? {}), ...update.client };
   if (!m.pricing_mode) m.pricing_mode = "total";
 
-  if (m.pricing_mode === "per_item") {
-    if (update.discount_amount !== undefined) {
-      m.discount_amount = Math.max(0, num(update.discount_amount, 0));
-    } else if (update.discount_percent !== undefined) {
-      const sub = computeTotals({ ...m, discount_amount: 0 }).subtotal;
-      m.discount_amount = round2((sub * Math.max(0, num(update.discount_percent, 0))) / 100);
-    }
+  if (update.discount_amount !== undefined) {
+    m.discount_amount = Math.max(0, num(update.discount_amount, 0));
+  } else if (update.discount_percent !== undefined) {
+    const sub = computeTotals({ ...m, discount_amount: 0 }).subtotal;
+    m.discount_amount = round2((sub * Math.max(0, num(update.discount_percent, 0))) / 100);
   }
   return m;
 }
 
-/** Switch mode by hand. total → per_item keeps the lines (price 0); per_item → total keeps the sum. */
+/** Switch mode by hand. total → per_item keeps the lines (price 0); per_item → total keeps the sum, discount and VAT. */
 export function switchMode(q: Partial<QuoteV2>, mode: PricingMode): Partial<QuoteV2> {
   if (q.pricing_mode === mode) return q;
   if (mode === "total") {
-    return { ...q, pricing_mode: "total", total: computeTotals(q).grandTotal || q.total || 0, discount_amount: 0 };
+    return { ...q, pricing_mode: "total", total: computeTotals(q).subtotal || q.total || 0, vat_included: false };
   }
-  return { ...q, pricing_mode: "per_item", items: (q.items ?? []).map(normalizeItem) };
+  return { ...q, pricing_mode: "per_item", items: (q.items ?? []).map(normalizeItem), vat_included: false };
 }
 
 export function formatILS(n: number): string {
@@ -173,7 +178,8 @@ export function formatQty(n: number): string {
 
 // ── Bubble payloads ─────────────────────────────────────────────────────────
 
-/** update_quote (existing workflow) — same fields the current /api/approve-quote sends. */
+/** update_quote (existing workflow) — the fields the old /api/approve-quote sends, plus images and discount_amount.
+ *  Bubble adds VAT on top, so a price that already includes VAT is sent split back to before-VAT. */
 export function buildTotalPayload(q: Partial<QuoteV2>, userId: string): Record<string, unknown> {
   const p: Record<string, unknown> = { status: "complete", user_id: userId };
   if (q.title) p.title = q.title;
@@ -182,7 +188,10 @@ export function buildTotalPayload(q: Partial<QuoteV2>, userId: string): Record<s
   if (q.client?.phone) p.client_phone = q.client.phone;
   if (q.client?.email) p.client_email = q.client.email;
   if (q.items?.length) p.items = q.items.map((it) => ({ name: it.name, description: it.description ?? "" }));
-  p.total = q.total ?? 0;
+  const t = computeTotals({ ...q, pricing_mode: "total" });
+  const split = q.has_tax && q.vat_included ? (n: number) => round2(n / (1 + VAT_RATE)) : (n: number) => n;
+  p.total = split(t.subtotal);
+  p.discount_amount = split(t.discount);
   p.has_tax = q.has_tax ?? false;
   if (q.warranty) p.warranty = q.warranty;
   if (q.terms) p.terms = q.terms;

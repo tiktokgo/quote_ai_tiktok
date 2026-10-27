@@ -1064,19 +1064,29 @@ function QuotePanelV2({
             </>
           ) : (
             <>
-              {quote.has_tax && t.vat > 0 && <Row label="לפני מע״מ" value={formatILS(t.beforeVat)} />}
-              {quote.has_tax && t.vat > 0 && <Row label="מע״מ 18%" value={formatILS(t.vat)} />}
               <Row
-                label={quote.has_tax ? "סה״כ כולל מע״מ" : "סה״כ לתשלום"}
-                strong
+                label={quote.has_tax && quote.vat_included ? "מחיר (כולל מע״מ)" : "מחיר"}
                 value={<NumberEdit value={quote.total ?? 0} onChange={(n) => onEdit({ total: n })} render={(n) => (n ? formatILS(n) : "עדכון מחיר ✏️")} />}
               />
+              <Row
+                label="הנחה"
+                value={<NumberEdit value={quote.discount_amount ?? 0} onChange={(n) => onEdit({ discount_amount: n })} render={(n) => (n ? `−${formatILS(n)}` : "הוספה ✏️")} />}
+              />
+              {quote.has_tax && t.vat > 0 && <Row label="לפני מע״מ" value={formatILS(t.beforeVat)} />}
+              {quote.has_tax && t.vat > 0 && <Row label="מע״מ 18%" value={formatILS(t.vat)} />}
+              <Row label={quote.has_tax ? "סה״כ כולל מע״מ" : "סה״כ לתשלום"} value={formatILS(t.grandTotal)} strong />
             </>
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12, color: "#4b5563", cursor: "pointer" }}>
             <input type="checkbox" checked={!!quote.has_tax} onChange={(e) => onEdit({ has_tax: e.target.checked })} style={{ accentColor: PURPLE }} />
-            {perItem ? "להוסיף מע״מ 18%" : "המחיר כולל מע״מ"}
+            להוסיף מע״מ 18%
           </label>
+          {!perItem && quote.has_tax && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, marginRight: 20, fontSize: 12, color: "#4b5563", cursor: "pointer" }}>
+              <input type="checkbox" checked={!!quote.vat_included} onChange={(e) => onEdit({ vat_included: e.target.checked })} style={{ accentColor: PURPLE }} />
+              המחיר שכתבתי כבר כולל מע״מ
+            </label>
+          )}
         </div>
 
         {(() => {

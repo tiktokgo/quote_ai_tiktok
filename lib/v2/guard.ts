@@ -30,6 +30,9 @@ export function guardUpdate(current: Partial<QuoteV2>, update: QuoteUpdateV2, la
   if (current.has_tax !== undefined && u.has_tax !== undefined && u.has_tax !== current.has_tax && !says(/מע["״'׳]?מ|מעמ/)) {
     delete u.has_tax; dropped.push("has_tax");
   }
+  if (current.vat_included !== undefined && u.vat_included !== undefined && u.vat_included !== current.vat_included && !says(/מע["״'׳]?מ|מעמ/)) {
+    delete u.vat_included; dropped.push("vat_included");
+  }
   if ((current.total ?? 0) > 0 && u.total !== undefined && u.total !== current.total && !/\d/.test(lastUser) && !says(/אלף|מאות|שקל/)) {
     delete u.total; dropped.push("total");
   }
