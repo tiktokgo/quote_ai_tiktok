@@ -169,7 +169,31 @@ export async function POST(req: NextRequest) {
     if (update) {
       const lastUser = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
       update = guardUpdate(current, update, lastUser);
-      const merged = mergeQuoteV2(current, update);
+      let merged = mergeQuoteV2(current, update);
+      // A quote with an amount but no items ("ישראל לוי 3000 שקל שיפוץ מטבח") — ask once more, for items only.
+      if (!merged.items?.length && ((merged.total ?? 0) > 0 || merged.title)) {
+        try {
+          const again = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+              ...messages,
+              { role: "system", content: `בטיוטה ששלחת אין פריטים: ${JSON.stringify(update)}\nשלח עכשיו update_quote עם items בלבד: 3-6 פריטים מקצועיים שמפרטים מה העבודה כוללת${merged.pricing_mode === "total" ? " (במצב total — unit_price=0)" : ""}.` },
+            ],
+            tools: [UPDATE_QUOTE_TOOL],
+            tool_choice: { type: "function", function: { name: "update_quote" } },
+            temperature: 0.2,
+          });
+          const fc = again.choices[0]?.message?.tool_calls?.[0];
+          if (fc && fc.type === "function") {
+            const items = (JSON.parse(fc.function.arguments) as QuoteUpdateV2).items;
+            if (Array.isArray(items) && items.length) {
+              update = { ...update, items };
+              merged = mergeQuoteV2(current, update);
+              console.log("[v2/chat] added missing items");
+            }
+          }
+        } catch { /* keep the draft without items */ }
+      }
       console.log(`[v2/chat] mode:${merged.pricing_mode} items:${merged.items?.length ?? 0}`);
       if (!text.trim()) text = nextQuestion(merged);
     }
