@@ -913,9 +913,12 @@ function ReviewCard({ onDone }: { onDone: (stars: number, comment: string) => vo
 function AiAvatar() {
   return (
     <span aria-hidden style={{
-      flexShrink: 0, width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-      fontSize: 14, fontWeight: 800, color: "#fff", background: "#25D366",
-    }}>ת</span>
+      flexShrink: 0, width: 28, height: 28, borderRadius: "50%", overflow: "hidden", background: "#fff", border: "1px solid #e5e7eb",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- a 5KB logo, no need for next/image */}
+      <img src="/tiktok-mark.jpg" alt="" width={24} height={24} style={{ display: "block" }} />
+    </span>
   );
 }
 
