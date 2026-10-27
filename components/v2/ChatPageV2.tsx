@@ -110,6 +110,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const [fileBusy, setFileBusy] = useState(false);
   const [flash, setFlash] = useState<number[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [undo, setUndo] = useState<Q | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
   const [chatOpen, setChatOpen] = useState(false); // mobile: full conversation over the quote
@@ -166,10 +167,11 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         const changed = (next.items ?? [])
           .map((it, i) => (JSON.stringify(it) !== JSON.stringify(before[i]) ? i : -1))
           .filter((i) => i >= 0);
+        setUndo(quote); // one tap brings back the quote as it was before this AI change
         setQuote(next);
         if (data.quote.suggested_items?.length) {
           const have = new Set((next.items ?? []).map((it) => it.name.trim()));
-          setSuggestions(data.quote.suggested_items.filter((s) => s?.name?.trim() && !have.has(s.name.trim())).slice(0, 4));
+          setSuggestions(data.quote.suggested_items.filter((s) => s?.name?.trim() && !have.has(s.name.trim())).slice(0, 6));
         }
         if (changed.length && before.length) {
           setFlash(changed);
@@ -369,6 +371,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setChatOpen(false);
     setInput("");
     setSuggestions([]);
+    setUndo(null);
   }, [confirmNew, aiContext.user_id, greeting]);
 
   // ── Save to Bubble ──────────────────────────────────────────────────────────
@@ -413,6 +416,13 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       placeholder={hasQuote ? "מה לשנות?" : "כתוב, דבר או צרף מסמך"}
     />
   );
+
+  const undoBtn = undo && hasQuote && !isLoading ? (
+    <button
+      onClick={() => { setQuote(undo); setUndo(null); setFlash([]); }}
+      style={{ ...chipStyle, display: "block", margin: "0 0 8px", fontSize: 12, padding: "5px 12px", color: "#4b5563", background: "#fff" }}
+    >↩ בטל את השינוי האחרון של ה-AI</button>
+  ) : null;
 
   const header = (
     <div dir="rtl" style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid #e8eaed", display: "flex", alignItems: "center", gap: 10, color: "#1a1a2e" }}>
@@ -526,6 +536,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
               </span>
             </button>
           )}
+          {undoBtn}
           {composer}
         </div>
       </div>
@@ -544,7 +555,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           {header}
           {messageList}
-          <div dir="rtl" style={{ padding: "8px 14px 14px" }}>{composer}</div>
+          <div dir="rtl" style={{ padding: "8px 14px 14px" }}>{undoBtn}{composer}</div>
         </div>
       </div>
     </div>
@@ -678,8 +689,8 @@ function AiAvatar() {
   return (
     <span aria-hidden style={{
       flexShrink: 0, width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-      fontSize: 14, color: "#fff", background: `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`,
-    }}>✨</span>
+      fontSize: 14, fontWeight: 800, color: "#fff", background: "#25D366",
+    }}>ת</span>
   );
 }
 
@@ -851,7 +862,11 @@ function QuotePanelV2({
                   item={it}
                   perItem={perItem}
                   onDone={(patch) => { updateItem(i, patch); setEditingIdx(null); }}
-                  onCancel={() => setEditingIdx(null)}
+                  onCancel={() => {
+                    // A new item that never got a name is removed rather than left blank.
+                    if (!it.name.trim()) onSetItems((list) => list.filter((_, j) => j !== i));
+                    setEditingIdx(null);
+                  }}
                   onDelete={() => { onSetItems((list) => list.filter((_, j) => j !== i)); setEditingIdx(null); }}
                   onReword={() => aiSuggest("item", i) as Promise<Suggestion[]>}
                 />
@@ -884,16 +899,17 @@ function QuotePanelV2({
             </div>
           ))}
           <button
-            onClick={() => { onSetItems((list) => [...list, normalizeItem({ name: "פריט חדש", unit: DEFAULT_UNIT })]); setEditingIdx(items.length); }}
+            onClick={() => { onSetItems((list) => [...list, normalizeItem({ name: "", unit: DEFAULT_UNIT })]); setEditingIdx(items.length); }}
             style={{ ...chipStyle, marginTop: 10, fontSize: 13 }}
           >+ הוספת פריט</button>
           {suggestions.length > 0 && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>✨ אולי כדאי להוסיף:</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <div className="v2-hscroll" style={{ display: "flex", flexWrap: "nowrap", gap: 6, overflowX: "auto", margin: "0 -18px", padding: "2px 18px 6px", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
+                <style>{`.v2-hscroll::-webkit-scrollbar{display:none}`}</style>
                 {suggestions.map((s, i) => (
                   <button key={s.name} title={s.description} onClick={() => onAddSuggestion(i)}
-                    style={{ ...chipStyle, fontSize: 12, padding: "6px 12px", background: "#faf5ff", border: "1px dashed #c4b5fd" }}>+ {s.name}</button>
+                    style={{ ...chipStyle, flexShrink: 0, whiteSpace: "nowrap", fontSize: 12, padding: "6px 12px", background: "#faf5ff", border: "1px dashed #c4b5fd" }}>+ {s.name}</button>
                 ))}
               </div>
             </div>
@@ -999,7 +1015,11 @@ function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
     }
   };
   const parse = (s: string) => parseFloat(s.replace(/,/g, "")) || 0;
-  const done = () => onDone({
+  const done = () => {
+    if (!d.name.trim() && !item.name.trim()) { onCancel(); return; } // new item left without a name
+    save();
+  };
+  const save = () => onDone({
     name: d.name.trim() || item.name,
     description: d.description,
     ...(perItem ? { quantity: parse(d.quantity) || 1, unit: d.unit, unit_price: parse(d.unit_price) } : {}),
@@ -1007,7 +1027,7 @@ function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "#faf5ff", padding: 10, borderRadius: 8 }}
       onKeyDown={(e) => { if (e.key === "Escape") onCancel(); if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) done(); }}>
-      <input autoFocus aria-label="שם הפריט" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} style={inputStyle} />
+      <input autoFocus aria-label="שם הפריט" placeholder="שם הפריט" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} style={inputStyle} />
       <textarea aria-label="תיאור" value={d.description} placeholder="תיאור (לא חובה)" rows={2} onChange={(e) => setD({ ...d, description: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} />
       {ai.state === "ready" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

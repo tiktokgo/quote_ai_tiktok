@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { verifyToken } from "@/lib/verifyToken";
 import { buildSystemPromptV2 } from "@/lib/v2/systemPrompt";
+import { guardUpdate } from "@/lib/v2/guard";
 import { UNITS, mergeQuoteV2, computeTotals } from "@/lib/v2/quote";
 import type { QuoteV2, QuoteUpdateV2 } from "@/lib/v2/quote";
 
@@ -55,7 +56,7 @@ const UPDATE_QUOTE_TOOL: OpenAI.Chat.ChatCompletionTool = {
         comments: { type: "string" },
         suggested_items: {
           type: "array",
-          description: "2-4 related items the user did NOT mention, offered as optional additions. Never also put them in items.",
+          description: "4-6 related items the user did NOT mention, offered as optional additions. Never also put them in items.",
           items: {
             type: "object",
             required: ["name"],
@@ -82,6 +83,7 @@ function nextQuestion(q: Partial<QuoteV2>): string {
 }
 
 const brief = (text: string) => text.trim().slice(0, 400);
+
 
 const FALSE_UPDATE = /(עדכנתי|הוספתי|שמרתי|נרשם|הכנתי|יצרתי|שיניתי|הסרתי|מחקתי)/;
 
@@ -114,7 +116,11 @@ export async function POST(req: NextRequest) {
     messages.push({
       role: "system",
       content:
-        `מצב ההצעה הנוכחי (מזג עדכונים לתוך זה; כשמשנים פריטים — שולחים רשימה מלאה):\n${JSON.stringify(current)}\n` +
+        `## ההצעה כבר קיימת — המשתמש ערך אותה, ואסור לאבד את מה שבה\n` +
+        `שנה רק את מה שהמשתמש ביקש בהודעה האחרונה. זו לא טיוטה ראשונה — אל תיצור הצעה מחדש.\n` +
+        `הודעה שהיא רק שם / טלפון / כתובת / מייל → עדכן רק את client, בלי items, warranty, terms, comments או title.\n` +
+        `שלח items רק אם ביקש לשנות פריטים (ואז רשימה מלאה, כולל כל הפריטים הקיימים כמו שהם).\n` +
+        `מצב ההצעה הנוכחי:\n${JSON.stringify(current)}\n` +
         (current.pricing_mode === "per_item" ? `פריטים בלי מחיר: ${t.missingPrices}.` : ""),
     });
   }
@@ -161,6 +167,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (update) {
+      const lastUser = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+      update = guardUpdate(current, update, lastUser);
       const merged = mergeQuoteV2(current, update);
       console.log(`[v2/chat] mode:${merged.pricing_mode} items:${merged.items?.length ?? 0}`);
       if (!text.trim()) text = nextQuestion(merged);
