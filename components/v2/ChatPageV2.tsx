@@ -123,6 +123,8 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [voice, setVoice] = useState<Voice>("idle");
   const [recSeconds, setRecSeconds] = useState(0);
+  const levelRef = useRef(0);          // live mic level 0..1 — read by the voice bars, no re-render
+  const cancelledRef = useRef(false);  // 🗑 while recording: stop without transcribing
 
   // A saved draft is offered on the start screen ("continue" / "start new") — never opened by itself.
   useEffect(() => {
@@ -241,15 +243,22 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       meter.analyser.getFloatTimeDomainData(meter.buf);
       let sum = 0;
       for (const v of meter.buf) sum += v * v;
-      peak = Math.max(peak, Math.sqrt(sum / meter.buf.length));
+      const rms = Math.sqrt(sum / meter.buf.length);
+      peak = Math.max(peak, rms);
+      levelRef.current = Math.sqrt(Math.min(1, Math.max(0, rms - 0.01) / 0.12));
     };
+    let raf = 0;
+    const meterLoop = () => { sampleLevel(); raf = requestAnimationFrame(meterLoop); };
     rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
     rec.onstop = async () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      cancelAnimationFrame(raf);
+      levelRef.current = 0;
       stream.getTracks().forEach((t) => t.stop());
       const measured = !!meter && meter.ctx.state === "running";
       meter?.ctx.close().catch(() => {});
       buzz(30);
+      if (cancelledRef.current) { cancelledRef.current = false; setVoice("idle"); return; }
       const blob = new Blob(chunks, { type: used });
       if (blob.size < 1000) { setVoice("idle"); return; }
       if (measured && peak < SILENCE_RMS) {
@@ -273,7 +282,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       }
     };
     recorderRef.current = rec;
+    cancelledRef.current = false;
     rec.start();
+    if (meter) meterLoop();
     buzz(30);
     setRecSeconds(0);
     setVoice("recording");
@@ -286,10 +297,17 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     }, 250);
   }, [voice, isLoading, token, send, addError]);
 
+  const cancelVoice = useCallback(() => {
+    if (recorderRef.current?.state !== "recording") return;
+    cancelledRef.current = true;
+    recorderRef.current.stop();
+  }, []);
+  const getLevel = useCallback(() => levelRef.current, []);
+
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (flashTimer.current) clearTimeout(flashTimer.current);
-    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    if (recorderRef.current?.state === "recording") { cancelledRef.current = true; recorderRef.current.stop(); }
   }, []);
 
   // ── File: PDF / image → /api/v2/read-file → send its text as a message ──────
@@ -445,6 +463,8 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       setInput={setInput}
       onSend={handleSend}
       onVoice={handleVoice}
+      onCancelVoice={cancelVoice}
+      getLevel={getLevel}
       onFile={handleFile}
       voice={voice}
       recSeconds={recSeconds}
@@ -522,6 +542,8 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
           setInput={setInput}
           onSend={handleSend}
           onVoice={handleVoice}
+          onCancelVoice={cancelVoice}
+          getLevel={getLevel}
           onFile={handleFile}
           voice={voice}
           recSeconds={recSeconds}
@@ -602,8 +624,8 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 }
 
 // ── Start screen ──────────────────────────────────────────────────────────────
-function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSeconds, busy, error, draft, onResume, onDiscard }: {
-  input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onFile: (f: File) => void;
+function StartScreen({ input, setInput, onSend, onVoice, onCancelVoice, getLevel, onFile, voice, recSeconds, busy, error, draft, onResume, onDiscard }: {
+  input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onCancelVoice: () => void; getLevel: () => number; onFile: (f: File) => void;
   voice: Voice; recSeconds: number; busy: boolean; error?: string;
   draft: Draft | null; onResume: () => void; onDiscard: () => void;
 }) {
@@ -652,14 +674,21 @@ function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSecon
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-          <button onClick={onVoice} disabled={working} aria-label={recording ? "עצור ושלח" : "הקלטה"} style={{
-            width: 84, height: 84, borderRadius: "50%", border: "none", cursor: working ? "default" : "pointer", fontSize: 34, color: "#fff",
-            background: recording ? "#dc2626" : `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`,
-            boxShadow: recording ? "0 0 0 10px #fee2e2" : "0 4px 14px rgba(124,58,237,0.35)", transition: "box-shadow .3s",
-          }}>{recording ? "■" : voice === "transcribing" ? <Dots light /> : "🎙"}</button>
+          <div style={{ position: "relative", width: 84, height: 84, margin: 12 }}>
+            {recording && <VoiceRing getLevel={getLevel} />}
+            <button onClick={onVoice} disabled={working} aria-label={recording ? "עצור ושלח" : "הקלטה"} style={{
+              position: "relative", width: 84, height: 84, borderRadius: "50%", border: "none", cursor: working ? "default" : "pointer", fontSize: 34, color: "#fff",
+              background: recording ? "#dc2626" : `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`,
+              boxShadow: recording ? "none" : "0 4px 14px rgba(124,58,237,0.35)",
+            }}>{recording ? "■" : voice === "transcribing" ? <Dots light /> : "🎙"}</button>
+          </div>
+          {recording && <VoiceBars getLevel={getLevel} width={180} />}
           <div style={{ fontSize: 14, color: recording ? "#dc2626" : "#4b5563", fontWeight: recording ? 700 : 400 }}>
             {recording ? `מקליט ${mmss(recSeconds)} — לחץ לסיום` : voice === "transcribing" ? "מתמלל..." : "לחץ ודבר — ספר על העבודה"}
           </div>
+          {recording && (
+            <button onClick={onCancelVoice} style={{ ...chipStyle, fontSize: 13, color: "#6b7280", background: "#fff" }}>🗑 ביטול הקלטה</button>
+          )}
         </div>
 
         <button onClick={() => fileRef.current?.click()} disabled={working || recording} style={{
@@ -681,8 +710,8 @@ function StartScreen({ input, setInput, onSend, onVoice, onFile, voice, recSecon
 }
 
 // ── Composer (chat input with mic + attach) ───────────────────────────────────
-function Composer({ input, setInput, onSend, onVoice, onFile, voice, recSeconds, busy, placeholder }: {
-  input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onFile: (f: File) => void;
+function Composer({ input, setInput, onSend, onVoice, onCancelVoice, getLevel, onFile, voice, recSeconds, busy, placeholder }: {
+  input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onCancelVoice: () => void; getLevel: () => number; onFile: (f: File) => void;
   voice: Voice; recSeconds: number; busy: boolean; placeholder: string;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -692,11 +721,15 @@ function Composer({ input, setInput, onSend, onVoice, onFile, voice, recSeconds,
   const submit = () => { onSend(); if (taRef.current) taRef.current.style.height = "auto"; };
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 6, border: "1px solid #e2e6ea", borderRadius: 26, padding: "6px 8px", background: "#fff", boxShadow: "0 1px 8px rgba(0,0,0,0.06)" }}>
-      <button onClick={() => fileRef.current?.click()} disabled={busy || voice !== "idle"} aria-label="צירוף מסמך או תמונה" style={{ ...roundBtn, border: "none", background: "transparent", color: "#6b7280" }}>📎</button>
+      {recording ? (
+        <button onClick={onCancelVoice} aria-label="ביטול הקלטה" style={{ ...roundBtn, border: "none", background: "transparent" }}>🗑</button>
+      ) : (
+        <button onClick={() => fileRef.current?.click()} disabled={busy || voice !== "idle"} aria-label="צירוף מסמך או תמונה" style={{ ...roundBtn, border: "none", background: "transparent", color: "#6b7280" }}>📎</button>
+      )}
       <input ref={fileRef} type="file" accept="application/pdf,image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
       {voice !== "idle" ? (
-        <button onClick={onVoice} disabled={voice === "transcribing"} style={{ flex: 1, minHeight: 40, border: "none", background: "transparent", textAlign: "right", fontFamily: "inherit", fontSize: 15, cursor: recording ? "pointer" : "default", color: recording ? "#dc2626" : "#6d28d9", display: "flex", alignItems: "center", gap: 8 }}>
-          {recording ? <>● מקליט {mmss(recSeconds)} — לחץ לסיום</> : <>מתמלל... <Dots /></>}
+        <button onClick={onVoice} disabled={voice === "transcribing"} style={{ flex: 1, minWidth: 0, minHeight: 40, border: "none", background: "transparent", textAlign: "right", fontFamily: "inherit", fontSize: 15, cursor: recording ? "pointer" : "default", color: recording ? "#dc2626" : "#6d28d9", display: "flex", alignItems: "center", gap: 8 }}>
+          {recording ? <><span style={{ fontVariantNumeric: "tabular-nums" }}>{mmss(recSeconds)}</span><VoiceBars getLevel={getLevel} /></> : <>מתמלל... <Dots /></>}
         </button>
       ) : (
         <textarea
@@ -722,6 +755,58 @@ function Composer({ input, setInput, onSend, onVoice, onFile, voice, recSeconds,
       )}
     </div>
   );
+}
+
+/** Runs `draw(level)` every animation frame while mounted — the parent never re-renders for it. */
+function useLevelFrames(getLevel: () => number, draw: (level: number) => void) {
+  const drawRef = useRef(draw);
+  useEffect(() => { drawRef.current = draw; });
+  useEffect(() => {
+    let raf = 0;
+    const loop = () => { drawRef.current(getLevel()); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [getLevel]);
+}
+
+/** Moving voice bars (like WhatsApp / Siri): purple while speech is heard, flat gray on silence. */
+function VoiceBars({ getLevel, width }: { getLevel: () => number; width?: number }) {
+  const N = 26;
+  const boxRef = useRef<HTMLDivElement>(null);
+  const hist = useRef<number[]>(Array(N).fill(0));
+  const last = useRef(0);
+  useLevelFrames(getLevel, (level) => {
+    const now = performance.now();
+    if (now - last.current < 70) return;
+    last.current = now;
+    hist.current = [...hist.current.slice(1), level];
+    const bars = boxRef.current?.children;
+    if (!bars) return;
+    hist.current.forEach((v, i) => {
+      const b = bars[i] as HTMLElement | undefined;
+      if (!b) return;
+      b.style.height = `${Math.round(3 + v * 21)}px`;
+      b.style.background = v > 0.05 ? PURPLE : "#d1d5db";
+    });
+  });
+  return (
+    <div ref={boxRef} aria-hidden style={{ flex: width ? undefined : 1, width, minWidth: 0, height: 26, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, overflow: "hidden" }}>
+      {Array.from({ length: N }, (_, i) => (
+        <span key={i} style={{ flex: "0 0 3px", height: 3, borderRadius: 2, background: "#d1d5db", transition: "height 70ms linear" }} />
+      ))}
+    </div>
+  );
+}
+
+/** Soft ring behind the big mic that grows with the voice. */
+function VoiceRing({ getLevel }: { getLevel: () => number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const smooth = useRef(0);
+  useLevelFrames(getLevel, (level) => {
+    smooth.current = smooth.current * 0.7 + level * 0.3;
+    if (ref.current) ref.current.style.transform = `scale(${(1.12 + smooth.current * 0.45).toFixed(3)})`;
+  });
+  return <div ref={ref} aria-hidden style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "#fee2e2", transform: "scale(1.12)" }} />;
 }
 
 function AiAvatar() {
