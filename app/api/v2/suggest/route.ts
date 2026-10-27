@@ -12,7 +12,12 @@ export const maxDuration = 30;
  * Nothing is applied here — the page shows the options and the user picks.
  */
 
-type Kind = "item" | "notes" | "terms";
+type Kind = "item" | "notes" | "terms" | "photo";
+
+// Only our own uploads (/api/v2/upload-photo) may be sent to the vision model.
+const isOurBlob = (u: string) => {
+  try { const h = new URL(u); return h.protocol === "https:" && h.hostname.endsWith(".public.blob.vercel-storage.com"); } catch { return false; }
+};
 
 const ITEM_SCHEMA = {
   type: "object", additionalProperties: false, required: ["options"],
@@ -40,6 +45,13 @@ const LINES_SCHEMA = {
 function prompt(kind: Kind, q: Partial<QuoteV2>, index: number, industry: string, company: string): string {
   const items = (q.items ?? []).map((it, i) => `${i + 1}. ${it.name}${it.description ? ` — ${it.description}` : ""}`).join("\n");
   const ctx = `עסק: ${company} (תחום: ${industry}).\nכותרת: ${q.title ?? ""}\nפריטים:\n${items || "(אין)"}`;
+  if (kind === "photo") {
+    return `${ctx}\n\nזו תמונה מהשטח שבעל המקצוע צילם לפני שהוא מכין הצעת מחיר.
+הסתכל על מה שרואים בתמונה והצע 3-5 פריטי עבודה שכנראה צריך לכלול בהצעה (למשל מקיר סדוק: תיקון סדקים, שפכטל, צבע).
+לכל פריט: name קצר ומקצועי ו-description של שורה אחת שמתארת מה רואים בתמונה ומה העבודה.
+אל תציע פריטים שכבר קיימים ברשימה. בלי מחירים, כמויות או מידות שלא רואים בבירור.
+אם התמונה לא קשורה לעבודה (סלפי, מסמך, מסך) — החזר רשימה ריקה.`;
+  }
   if (kind === "item") {
     const it = q.items?.[index];
     return `${ctx}\n\nכתוב 3 ניסוחים שונים לפריט מספר ${index + 1} ("${it?.name ?? ""}"${it?.description ? ` — ${it.description}` : ""}) בהצעת מחיר בעברית.
@@ -63,14 +75,16 @@ export async function POST(req: NextRequest) {
   if (!v.valid) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!process.env.OPENAI_API_KEY) return Response.json({ error: "not_configured" }, { status: 503 });
 
-  let body: { kind?: Kind; quote?: Partial<QuoteV2>; index?: number };
+  let body: { kind?: Kind; quote?: Partial<QuoteV2>; index?: number; image_url?: string };
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: "invalid_body" }, { status: 400 });
   }
   const kind = body.kind;
-  if (kind !== "item" && kind !== "notes" && kind !== "terms") return Response.json({ error: "bad_kind" }, { status: 400 });
+  if (kind !== "item" && kind !== "notes" && kind !== "terms" && kind !== "photo") return Response.json({ error: "bad_kind" }, { status: 400 });
+  const imageUrl = body.image_url ?? "";
+  if (kind === "photo" && !isOurBlob(imageUrl)) return Response.json({ error: "bad_image" }, { status: 400 });
   const q = body.quote && typeof body.quote === "object" ? body.quote : {};
   const index = Number(body.index ?? 0);
   if (kind === "item" && !q.items?.[index]) return Response.json({ error: "bad_index" }, { status: 400 });
@@ -82,15 +96,20 @@ export async function POST(req: NextRequest) {
       temperature: 0.7,
       messages: [
         { role: "system", content: "אתה עוזר לבעלי מקצוע בישראל לנסח הצעות מחיר. כתוב בעברית מקצועית, פשוטה וקצרה." },
-        { role: "user", content: prompt(kind, q, index, v.payload.industry, v.payload.company_name) },
+        kind === "photo"
+          ? { role: "user", content: [
+              { type: "text", text: prompt(kind, q, index, v.payload.industry, v.payload.company_name) },
+              { type: "image_url", image_url: { url: imageUrl, detail: "low" } },
+            ] }
+          : { role: "user", content: prompt(kind, q, index, v.payload.industry, v.payload.company_name) },
       ],
       response_format: {
         type: "json_schema",
-        json_schema: { name: "suggestions", strict: true, schema: kind === "item" ? ITEM_SCHEMA : LINES_SCHEMA },
+        json_schema: { name: "suggestions", strict: true, schema: kind === "item" || kind === "photo" ? ITEM_SCHEMA : LINES_SCHEMA },
       },
     });
     const parsed = JSON.parse(res.choices[0]?.message?.content ?? "{}") as { options?: unknown[] };
-    return Response.json({ options: (parsed.options ?? []).slice(0, kind === "item" ? 3 : 4) });
+    return Response.json({ options: (parsed.options ?? []).slice(0, kind === "item" ? 3 : kind === "photo" ? 5 : 4) });
   } catch (err) {
     console.error("[v2/suggest] error:", err instanceof Error ? err.message : err);
     return Response.json({ error: "ai_error" }, { status: 502 });

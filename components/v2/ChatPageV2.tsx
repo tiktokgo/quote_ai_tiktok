@@ -35,7 +35,8 @@ const FLASH_BG = "#dcfce7";
 const MISSING_BG = "#fef3c7";
 
 type Suggestion = { name: string; description?: string };
-type AiSuggest = (kind: "item" | "notes" | "terms", index?: number) => Promise<unknown[]>;
+type AiSuggest = (kind: "item" | "notes" | "terms" | "photo", index?: number, imageUrl?: string) => Promise<unknown[]>;
+const MAX_PHOTOS = 10;
 
 // ── Draft persistence (survives a refresh of the Bubble iframe) ───────────────
 const draftKey = (userId?: string) => `quote_v2_draft:${userId ?? "anon"}`;
@@ -71,7 +72,8 @@ const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${St
 
 /** Phone photos are often 3–8MB; resize to fit the 4MB request limit and keep the text readable. */
 async function shrinkImage(file: File): Promise<File> {
-  if (!file.type.startsWith("image/") || file.size < 1.5 * 1024 * 1024) return file;
+  const webSafe = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+  if (!file.type.startsWith("image/") || (webSafe && file.size < 1.5 * 1024 * 1024)) return file; // else re-encode (also HEIC → JPEG)
   try {
     const bmp = await createImageBitmap(file);
     const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
@@ -318,11 +320,11 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setQuote((prev) => ({ ...prev, items: fn(prev.items ?? []) })), []);
 
   // ✨ AI options the user picks from (item wording, notes, terms) — nothing is applied without a tap.
-  const aiSuggest = useCallback<AiSuggest>(async (kind, index) => {
+  const aiSuggest = useCallback<AiSuggest>(async (kind, index, imageUrl) => {
     const res = await fetch("/api/v2/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ kind, quote, index }),
+      body: JSON.stringify({ kind, quote, index, image_url: imageUrl }),
     });
     const data = (await res.json().catch(() => ({}))) as { options?: unknown[]; error?: string };
     if (!res.ok || !Array.isArray(data.options)) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -339,6 +341,40 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlash([]), 2200);
   }, [suggestions, quote.items, setItems]);
+
+  // 📷 Site photos: upload → add to the quote → the AI looks at the photo and offers items as "+ add" chips.
+  const [photoBusy, setPhotoBusy] = useState<string>(""); // status line while uploading / looking
+  const addPhotos = useCallback(async (files: File[]) => {
+    const room = MAX_PHOTOS - (quote.images?.length ?? 0);
+    const list = files.filter((f) => f.type.startsWith("image/")).slice(0, Math.max(0, room));
+    if (!list.length) { setPhotoBusy(room <= 0 ? `אפשר עד ${MAX_PHOTOS} תמונות` : ""); return; }
+    let failed = 0;
+    for (const [k, f] of list.entries()) {
+      setPhotoBusy(list.length > 1 ? `מעלה תמונה ${k + 1} מתוך ${list.length}...` : "מעלה תמונה...");
+      try {
+        const file = await shrinkImage(f);
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+        const res = await fetch("/api/v2/upload-photo", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+        const data = (await res.json().catch(() => ({}))) as { url?: string };
+        if (!res.ok || !data.url) throw new Error();
+        const url = data.url;
+        setQuote((prev) => ({ ...prev, images: [...(prev.images ?? []), url] }));
+        setPhotoBusy("✨ מסתכל על התמונה...");
+        const opts = (await aiSuggest("photo", undefined, url).catch(() => [])) as Suggestion[];
+        setSuggestions((prev) => {
+          const have = new Set([...prev.map((s) => s.name.trim()), ...(quote.items ?? []).map((it) => it.name.trim())]);
+          return [...opts.filter((o) => o?.name?.trim() && !have.has(o.name.trim())), ...prev].slice(0, 8);
+        });
+      } catch {
+        failed++;
+      }
+    }
+    setPhotoBusy(failed ? `${failed === 1 ? "תמונה אחת לא עלתה" : `${failed} תמונות לא עלו`} — נסה שוב` : "");
+  }, [quote.images, quote.items, token, aiSuggest]);
+
+  const removePhoto = useCallback((url: string) =>
+    setQuote((prev) => ({ ...prev, images: (prev.images ?? []).filter((u) => u !== url) })), []);
 
   const resumeDraft = useCallback(() => {
     if (!pendingDraft) return;
@@ -470,6 +506,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       suggestions={suggestions}
       onAddSuggestion={addSuggestion}
       aiSuggest={aiSuggest}
+      onAddPhotos={addPhotos}
+      onRemovePhoto={removePhoto}
+      photoBusy={photoBusy}
     />
   );
 
@@ -722,7 +761,7 @@ function Bubble({ m }: { m: ChatMessage }) {
 // ── Quote panel ───────────────────────────────────────────────────────────────
 function QuotePanelV2({
   quote, companyName, companyLogo, onEdit, onEditClient, onSetItems, onSwitchMode, onSave, saveState, saveError, isTest, flash,
-  suggestions, onAddSuggestion, aiSuggest,
+  suggestions, onAddSuggestion, aiSuggest, onAddPhotos, onRemovePhoto, photoBusy,
 }: {
   quote: Q;
   companyName: string;
@@ -739,6 +778,9 @@ function QuotePanelV2({
   suggestions: Suggestion[];
   onAddSuggestion: (i: number) => void;
   aiSuggest: AiSuggest;
+  onAddPhotos: (files: File[]) => void;
+  onRemovePhoto: (url: string) => void;
+  photoBusy: string;
 }) {
   const perItem = quote.pricing_mode === "per_item";
   const items = quote.items ?? [];
@@ -915,6 +957,8 @@ function QuotePanelV2({
             </div>
           )}
         </div>
+
+        <PhotosBox images={quote.images ?? []} onAdd={onAddPhotos} onRemove={onRemovePhoto} busy={photoBusy} />
 
         {/* Totals */}
         <div style={{ margin: "14px 0", padding: "12px 14px", background: "#f5f3ff", borderRadius: 10, border: "1px solid #ddd6fe", fontSize: 13 }}>
@@ -1120,6 +1164,47 @@ function Box({ title, children }: { title: string; children: React.ReactNode }) 
       <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 4 }}>{title}</div>
       {children}
     </div>
+  );
+}
+
+/** 📷 Site photos: thumbnails, add (camera or gallery), remove (tap twice). */
+function PhotosBox({ images, onAdd, onRemove, busy }: { images: string[]; onAdd: (f: File[]) => void; onRemove: (url: string) => void; busy: string }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [armed, setArmed] = useState<string | null>(null);
+  const working = !!busy && busy.endsWith("...");
+  return (
+    <Box title="📷 תמונות מהשטח">
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+        {images.map((url) => (
+          <div key={url} style={{ position: "relative", width: 76, height: 76 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={url} alt="" style={{ width: 76, height: 76, objectFit: "cover", borderRadius: 10, border: "1px solid #e5e7eb" }} />
+            <button
+              onClick={() => (armed === url ? (onRemove(url), setArmed(null)) : setArmed(url))}
+              aria-label="הסרת תמונה"
+              style={{
+                position: "absolute", top: 4, insetInlineEnd: 4, height: 22, minWidth: 22, padding: armed === url ? "0 6px" : 0, borderRadius: 11, border: "none",
+                background: armed === url ? "#dc2626" : "rgba(0,0,0,0.55)", color: "#fff", fontSize: armed === url ? 10 : 13, cursor: "pointer", fontFamily: "inherit",
+              }}
+            >{armed === url ? "להסיר?" : "×"}</button>
+          </div>
+        ))}
+        {images.length < MAX_PHOTOS && (
+          <button onClick={() => fileRef.current?.click()} disabled={working} aria-label="הוספת תמונות" style={{
+            width: 76, height: 76, borderRadius: 10, border: "1.5px dashed #c4b5fd", background: "#faf5ff", color: PURPLE,
+            cursor: working ? "default" : "pointer", fontFamily: "inherit", fontSize: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+          }}>
+            <span style={{ fontSize: 22 }}>📷</span>הוספה
+          </button>
+        )}
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { const fs = [...(e.target.files ?? [])]; e.target.value = ""; if (fs.length) onAdd(fs); }} />
+      {busy ? (
+        <div style={{ fontSize: 12, color: working ? PURPLE : "#b45309", marginTop: 6 }}>{busy}</div>
+      ) : !images.length ? (
+        <div style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>יופיעו ב-PDF ובעמוד ההצעה. ✨ ה-AI יציע פריטים לפי מה שרואים בתמונה.</div>
+      ) : null}
+    </Box>
   );
 }
 

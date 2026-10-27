@@ -46,6 +46,8 @@ export interface QuoteV2 {
   warranty: string;
   terms: string;
   comments: string;
+  /** Photos from the site (public Vercel Blob URLs) — shown in the PDF and on the quote page. */
+  images?: string[];
 }
 
 /** What the AI sends in update_quote (every field optional). */
@@ -185,6 +187,7 @@ export function buildTotalPayload(q: Partial<QuoteV2>, userId: string): Record<s
   if (q.warranty) p.warranty = q.warranty;
   if (q.terms) p.terms = q.terms;
   if (q.comments) p.comments = q.comments;
+  if (q.images?.length) p.images = q.images;
   return p;
 }
 
@@ -213,6 +216,8 @@ export function buildPerItemPayload(q: Partial<QuoteV2>, userId: string, source 
     warranty: q.warranty ?? "",
     terms: q.terms ?? "",
     comments: q.comments ?? "",
+    // Sent only when there are photos, so a Bubble workflow without the parameter keeps working.
+    ...(q.images?.length ? { images: q.images } : {}),
   };
 }
 
