@@ -1,4 +1,5 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
+import { track, costUsd, sessionOf } from "@/lib/v2/track";
 import OpenAI from "openai";
 import { verifyToken } from "@/lib/verifyToken";
 import { buildSystemPromptV2 } from "@/lib/v2/systemPrompt";
@@ -128,6 +129,10 @@ export async function POST(req: NextRequest) {
   messages.push(...history);
 
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  let cost = 0;
+  const flags = { forced: false, refilled: false };
+  const report = (props: Record<string, string | number | boolean | null>) =>
+    after(() => track({ event: "ai_reply", user_id: ctx.user_id, session_id: sessionOf(req), cost_usd: cost, props: { ...props, ...flags, turn: history.length } }));
 
   try {
     const res = await openai.chat.completions.create({
@@ -138,6 +143,7 @@ export async function POST(req: NextRequest) {
       parallel_tool_calls: false,
       temperature: 0.3,
     });
+    cost += costUsd("gpt-4o", res.usage) ?? 0;
     const msg = res.choices[0]?.message;
     let text = msg?.content ?? "";
     let update: QuoteUpdateV2 | null = null;
@@ -158,10 +164,12 @@ export async function POST(req: NextRequest) {
         tool_choice: { type: "function", function: { name: "update_quote" } },
         temperature: 0,
       });
+      cost += costUsd("gpt-4o", forced.usage) ?? 0;
       const fc = forced.choices[0]?.message?.tool_calls?.[0];
       if (fc && fc.type === "function") {
         try {
           update = JSON.parse(fc.function.arguments) as QuoteUpdateV2;
+          flags.forced = true;
           console.log("[v2/chat] forced update");
         } catch { /* ignore */ }
       }
@@ -184,12 +192,14 @@ export async function POST(req: NextRequest) {
             tool_choice: { type: "function", function: { name: "update_quote" } },
             temperature: 0.2,
           });
+          cost += costUsd("gpt-4o", again.usage) ?? 0;
           const fc = again.choices[0]?.message?.tool_calls?.[0];
           if (fc && fc.type === "function") {
             const items = (JSON.parse(fc.function.arguments) as QuoteUpdateV2).items;
             if (Array.isArray(items) && items.length) {
               update = { ...update, items };
               merged = mergeQuoteV2(current, update);
+              flags.refilled = true;
               console.log("[v2/chat] added missing items");
             }
           }
@@ -200,10 +210,13 @@ export async function POST(req: NextRequest) {
     }
     if (!text.trim()) text = "לא הבנתי — אפשר לנסח שוב?";
 
+    const after_ = update ? mergeQuoteV2(current, update) : current;
+    report({ updated: !!update, mode: after_.pricing_mode ?? null, items: after_.items?.length ?? 0, first: !current.items?.length });
     return json({ text: brief(text), quote: update });
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     console.error("[v2/chat] error:", m);
+    report({ error: "ai_error" });
     return json({ error: "ai_error" }, 502);
   }
 }

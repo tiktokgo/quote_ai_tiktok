@@ -1,6 +1,7 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import { put } from "@vercel/blob";
 import { userIdFromRequest } from "@/lib/auth";
+import { track, sessionOf } from "@/lib/v2/track";
 
 /**
  * POST /api/v2/upload-photo — multipart: file=<image>. Auth: Authorization: Bearer <JWT>.
@@ -31,6 +32,8 @@ export async function POST(req: NextRequest) {
     const safeUser = auth.userId.replace(/[^\w-]/g, "").slice(0, 40) || "user";
     const name = `quote-photos/${safeUser}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
     const blob = await put(name, file, { access: "public", contentType: file.type });
+    const kb = Math.round(file.size / 1024);
+    after(() => track({ event: "photo_uploaded", user_id: auth.userId, session_id: sessionOf(req), props: { kb } }));
     return Response.json({ url: blob.url });
   } catch (err) {
     console.error("[v2/upload-photo] error:", err instanceof Error ? err.message : err);

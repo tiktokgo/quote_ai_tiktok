@@ -1,6 +1,7 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import OpenAI from "openai";
 import { verifyToken } from "@/lib/verifyToken";
+import { track, costUsd, sessionOf } from "@/lib/v2/track";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require("pdf-parse");
 
@@ -36,12 +37,15 @@ export async function POST(req: NextRequest) {
 
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
   const isImage = file.type.startsWith("image/");
+  const report = (error: string | null, cost?: number) =>
+    after(() => track({ event: "file_read", user_id: v.payload.user_id, session_id: sessionOf(req), cost_usd: cost, props: { kind: isPdf ? "pdf" : isImage ? "image" : "other", ok: !error, error } }));
 
   try {
     if (isPdf) {
       const result = await pdfParse(Buffer.from(await file.arrayBuffer()));
       const text = String(result.text ?? "").replace(/\n{3,}/g, "\n\n").trim();
       // A scanned PDF has no text layer — ask for a photo instead.
+      report(text.length < 20 ? "scanned_pdf" : null);
       if (text.length < 20) return Response.json({ error: "scanned_pdf" }, { status: 422 });
       return Response.json({ text: text.slice(0, MAX_TEXT) });
     }
@@ -63,13 +67,16 @@ export async function POST(req: NextRequest) {
         }],
       });
       const text = (completion.choices[0]?.message?.content ?? "").trim();
-      if (!text || text.includes("NOT_A_QUOTE")) return Response.json({ error: "not_a_quote" }, { status: 422 });
+      const notQuote = !text || text.includes("NOT_A_QUOTE");
+      report(notQuote ? "not_a_quote" : null, costUsd("gpt-4o", completion.usage));
+      if (notQuote) return Response.json({ error: "not_a_quote" }, { status: 422 });
       return Response.json({ text: text.slice(0, MAX_TEXT) });
     }
 
     return Response.json({ error: "unsupported_type" }, { status: 415 });
   } catch (err) {
     console.error("[v2/read-file] error:", err instanceof Error ? err.message : err);
+    report("read_failed");
     return Response.json({ error: "read_failed" }, { status: 502 });
   }
 }

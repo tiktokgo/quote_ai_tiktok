@@ -1,7 +1,8 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import OpenAI from "openai";
 import { verifyToken } from "@/lib/verifyToken";
-import { transcribe } from "@/lib/voiceQuote";
+import { transcribeWithUsage } from "@/lib/voiceQuote";
+import { track, costUsd, sessionOf } from "@/lib/v2/track";
 
 // Transcription of a few minutes of speech usually takes 3–10s.
 export const maxDuration = 60;
@@ -37,13 +38,18 @@ export async function POST(req: NextRequest) {
     audio = new File([audio], `recording.${ext}`, { type: audio.type || `audio/${ext}` });
   }
 
+  const kb = Math.round(audio.size / 1024);
+  const report = (props: Record<string, string | number | boolean>, cost?: number) =>
+    after(() => track({ event: "transcribed", user_id: v.payload.user_id, session_id: sessionOf(req), cost_usd: cost, props: { kb, ...props } }));
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const text = await transcribe(openai, audio, v.payload.industry);
+    const { text, usage } = await transcribeWithUsage(openai, audio, v.payload.industry);
+    report({ ok: !!text, chars: text.length }, costUsd("gpt-4o-transcribe", usage));
     if (!text) return Response.json({ error: "no_speech" }, { status: 422 });
     return Response.json({ text });
   } catch (err) {
     console.error("[v2/transcribe] error:", err instanceof Error ? err.message : err);
+    report({ ok: false, error: "transcribe_failed" });
     return Response.json({ error: "transcribe_failed" }, { status: 502 });
   }
 }

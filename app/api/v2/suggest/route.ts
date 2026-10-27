@@ -1,6 +1,7 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import OpenAI from "openai";
 import { verifyToken } from "@/lib/verifyToken";
+import { track, costUsd, sessionOf } from "@/lib/v2/track";
 import type { QuoteV2 } from "@/lib/v2/quote";
 
 export const maxDuration = 30;
@@ -109,9 +110,12 @@ export async function POST(req: NextRequest) {
       },
     });
     const parsed = JSON.parse(res.choices[0]?.message?.content ?? "{}") as { options?: unknown[] };
-    return Response.json({ options: (parsed.options ?? []).slice(0, kind === "item" ? 3 : kind === "photo" ? 5 : 4) });
+    const options = (parsed.options ?? []).slice(0, kind === "item" ? 3 : kind === "photo" ? 5 : 4);
+    after(() => track({ event: "ai_suggest", user_id: v.payload.user_id, session_id: sessionOf(req), cost_usd: costUsd("gpt-4o", res.usage), props: { kind, options: options.length } }));
+    return Response.json({ options });
   } catch (err) {
     console.error("[v2/suggest] error:", err instanceof Error ? err.message : err);
+    after(() => track({ event: "ai_suggest", user_id: v.payload.user_id, session_id: sessionOf(req), props: { kind, error: "ai_error" } }));
     return Response.json({ error: "ai_error" }, { status: 502 });
   }
 }

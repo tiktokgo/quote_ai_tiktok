@@ -164,6 +164,10 @@ name, phone (ספרות בלבד, כפי שנאמר), email, address — רק א
 כתוב הכל בעברית.`;
 
 export async function transcribe(openai: OpenAI, audio: File, industry?: string): Promise<string> {
+  return (await transcribeWithUsage(openai, audio, industry)).text;
+}
+
+export async function transcribeWithUsage(openai: OpenAI, audio: File, industry?: string) {
   const res = await openai.audio.transcriptions.create({
     file: audio,
     model: "gpt-4o-transcribe",
@@ -172,7 +176,9 @@ export async function transcribe(openai: OpenAI, audio: File, industry?: string)
     // ("client name, phone, address…") gets "transcribed" when the audio is silent.
     prompt: `הצעת מחיר${industry ? `, ${industry}` : ""}. ש"ח, מ"ר, מע"מ.`,
   });
-  return res.text.trim();
+  // gpt-4o-transcribe reports token usage (cost stays unknown when it doesn't).
+  const usage = (res as { usage?: { input_tokens?: number; output_tokens?: number; input_token_details?: { audio_tokens?: number } } }).usage;
+  return { text: res.text.trim(), usage: usage?.input_tokens !== undefined ? usage : undefined };
 }
 
 export async function extractQuote(

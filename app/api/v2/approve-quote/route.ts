@@ -1,6 +1,7 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import { userIdFromRequest } from "@/lib/auth";
-import { buildPerItemPayload, buildTotalPayload, toBubbleTest } from "@/lib/v2/quote";
+import { buildPerItemPayload, buildTotalPayload, toBubbleTest, computeTotals } from "@/lib/v2/quote";
+import { track, sessionOf } from "@/lib/v2/track";
 import type { QuoteV2 } from "@/lib/v2/quote";
 
 /**
@@ -37,6 +38,13 @@ export async function POST(req: NextRequest) {
   if (isTest) url = toBubbleTest(url);
 
   const payload = perItem ? buildPerItemPayload(quote, auth.userId) : buildTotalPayload(quote, auth.userId);
+  const t = computeTotals(quote);
+  const report = (ok: boolean, error: string | null) =>
+    after(() => track({ event: "saved", user_id: auth.userId, session_id: sessionOf(req), props: {
+      ok, error, test: isTest, mode: perItem ? "per_item" : "total", items: quote.items?.length ?? 0,
+      photos: quote.images?.length ?? 0, has_tax: !!quote.has_tax, discount: t.discount > 0,
+      missing_prices: t.missingPrices, amount: Math.round(t.grandTotal),
+    } }));
 
   try {
     const res = await fetch(url, {
@@ -49,6 +57,7 @@ export async function POST(req: NextRequest) {
     console.log(`[v2/approve] mode:${perItem ? "per_item" : "total"} test:${isTest} HTTP ${res.status} items:${quote.items?.length ?? 0}`);
     if (!res.ok) {
       console.warn(`[v2/approve] Bubble error: ${text.slice(0, 300)}`);
+      report(false, `bubble_${res.status}`);
       return Response.json({ ok: false, message: `bubble_${res.status}` }, { status: 502 });
     }
 
@@ -57,6 +66,7 @@ export async function POST(req: NextRequest) {
       const j = JSON.parse(text);
       quote_id = j.quote_id ?? j.response?.quote_id;
     } catch { /* ignore */ }
+    report(!!quote_id, quote_id ? null : "no_quote_id");
     if (!quote_id) return Response.json({ ok: false, message: "no_quote_id" }, { status: 502 });
 
     const redirectBase = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
@@ -65,6 +75,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[v2/approve] error:", msg);
+    report(false, "network_error");
     return Response.json({ ok: false, message: "network_error" }, { status: 502 });
   }
 }

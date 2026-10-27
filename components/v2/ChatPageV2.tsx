@@ -62,6 +62,18 @@ function clearDraft(userId?: string) {
 }
 
 const buzz = (ms: number | number[]) => { try { navigator.vibrate?.(ms); } catch { /* iOS: not supported */ } };
+
+// ── Usage events → /api/v2/event → Supabase. What people did, never quote content. ──
+const SESSION_ID = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const sid = { "x-v2-session": SESSION_ID }; // server events (AI calls, saves) join the same session
+const tracking = { token: "", last: "", saved: false };
+type EvProps = Record<string, string | number | boolean | null>;
+function ev(event: string, props?: EvProps) {
+  tracking.last = event;
+  if (!tracking.token) return;
+  const body = JSON.stringify({ token: tracking.token, session_id: SESSION_ID, events: [{ event, props }] });
+  fetch("/api/v2/event", { method: "POST", keepalive: true, headers: { "Content-Type": "text/plain" }, body }).catch(() => {});
+}
 const timeAgo = (at: number) => {
   const min = Math.round((Date.now() - at) / 60000);
   if (min < 60) return min <= 1 ? "לפני דקה" : `לפני ${min} דקות`;
@@ -125,6 +137,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const [recSeconds, setRecSeconds] = useState(0);
   const levelRef = useRef(0);          // live mic level 0..1 — read by the voice bars, no re-render
   const cancelledRef = useRef(false);  // 🗑 while recording: stop without transcribing
+  const recSecRef = useRef(0);         // recording length for usage events (the state is stale in callbacks)
 
   // A saved draft is offered on the start screen ("continue" / "start new") — never opened by itself.
   useEffect(() => {
@@ -133,7 +146,18 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setIsMobile(window.innerWidth < 768);
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+
+    tracking.token = token;
+    ev("opened", { has_draft: !!d, mobile: window.innerWidth < 768, test: bubbleEnv === "test" });
+    // Where people stop: the last thing they did before leaving without saving.
+    const onLeave = () => {
+      if (tracking.saved || !tracking.token) return;
+      const body = JSON.stringify({ token: tracking.token, session_id: SESSION_ID, events: [{ event: "left", props: { step: tracking.last } }] });
+      navigator.sendBeacon?.("/api/v2/event", body);
+      tracking.saved = true; // once per page
+    };
+    window.addEventListener("pagehide", onLeave);
+    return () => { window.removeEventListener("resize", onResize); window.removeEventListener("pagehide", onLeave); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist on every change
@@ -149,16 +173,17 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const started = hasQuote || messages.some((m) => m.role === "user");
 
   // ── Send to AI ──────────────────────────────────────────────────────────────
-  const send = useCallback(async (text: string, display?: string) => {
+  const send = useCallback(async (text: string, display?: string, via: "text" | "voice" | "file" = "text") => {
     const userText = text.trim();
     if (!userText || isLoading) return;
+    if (!messages.some((m) => m.role === "user")) ev("started", { via });
     const history = [...messages.filter((m) => !m.loading && !m.error), { role: "user" as const, content: userText, display }];
     setMessages([...history, { role: "assistant", content: "", loading: true }]);
     setIsLoading(true);
     try {
       const res = await fetch("/api/v2/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...sid, "Content-Type": "application/json" },
         body: JSON.stringify({ token, currentQuote: quote, messages: history.map(({ role, content }) => ({ role, content })) }),
       });
       const data = (await res.json().catch(() => ({}))) as { text?: string; quote?: QuoteUpdateV2 | null; error?: string };
@@ -258,11 +283,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       const measured = !!meter && meter.ctx.state === "running";
       meter?.ctx.close().catch(() => {});
       buzz(30);
-      if (cancelledRef.current) { cancelledRef.current = false; setVoice("idle"); return; }
+      if (cancelledRef.current) { cancelledRef.current = false; setVoice("idle"); ev("voice_cancelled", { sec: recSecRef.current }); return; }
       const blob = new Blob(chunks, { type: used });
       if (blob.size < 1000) { setVoice("idle"); return; }
       if (measured && peak < SILENCE_RMS) {
         setVoice("idle");
+        ev("voice_silent", { sec: recSecRef.current });
         addError("לא שמעתי דיבור בהקלטה — נסה שוב, קרוב יותר למיקרופון");
         return;
       }
@@ -271,13 +297,15 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         const ext = used.includes("mp4") ? "mp4" : used.includes("ogg") ? "ogg" : "webm";
         const fd = new FormData();
         fd.append("audio", blob, `recording.${ext}`);
-        const res = await fetch("/api/v2/transcribe", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+        const res = await fetch("/api/v2/transcribe", { method: "POST", headers: { ...sid, Authorization: `Bearer ${token}` }, body: fd });
         const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
         if (!res.ok || !data.text) throw new Error(data.error ?? `HTTP ${res.status}`);
         setVoice("idle");
-        send(data.text);
+        ev("voice_sent", { sec: recSecRef.current });
+        send(data.text, undefined, "voice");
       } catch (e) {
         setVoice("idle");
+        ev("voice_failed", { error: e instanceof Error ? e.message : "" });
         addError(e instanceof Error && e.message === "no_speech" ? "לא שמעתי דיבור בהקלטה — נסה שוב" : "התמלול נכשל — נסה שוב או הקלד");
       }
     };
@@ -288,10 +316,13 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     buzz(30);
     setRecSeconds(0);
     setVoice("recording");
+    recSecRef.current = 0;
+    ev("voice_started");
     const t0 = Date.now();
     timerRef.current = setInterval(() => {
       const s = Math.floor((Date.now() - t0) / 1000);
       setRecSeconds(s);
+      recSecRef.current = s;
       sampleLevel();
       if (s >= MAX_REC_SEC && rec.state === "recording") rec.stop();
     }, 250);
@@ -318,14 +349,15 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       const file = await shrinkImage(picked);
       const fd = new FormData();
       fd.append("file", file, file.name);
-      const res = await fetch("/api/v2/read-file", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const res = await fetch("/api/v2/read-file", { method: "POST", headers: { ...sid, Authorization: `Bearer ${token}` }, body: fd });
       const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
       if (!res.ok || !data.text) throw new Error(data.error ?? `HTTP ${res.status}`);
       setFileBusy(false);
-      send(`צירפתי מסמך (${picked.name}). צור ממנו הצעת מחיר:\n\n${data.text}`, `📎 ${picked.name}`);
+      send(`צירפתי מסמך (${picked.name}). צור ממנו הצעת מחיר:\n\n${data.text}`, `📎 ${picked.name}`, "file");
     } catch (e) {
       setFileBusy(false);
       const code = e instanceof Error ? e.message : "";
+      ev("file_failed", { error: code });
       addError(FILE_ERRORS[code] ?? "לא הצלחתי לקרוא את הקובץ — נסה שוב או תאר במילים");
     }
   }, [fileBusy, isLoading, token, send, addError]);
@@ -339,9 +371,10 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   // ✨ AI options the user picks from (item wording, notes, terms) — nothing is applied without a tap.
   const aiSuggest = useCallback<AiSuggest>(async (kind, index, imageUrl) => {
+    if (kind !== "photo") ev("ai_button", { kind });
     const res = await fetch("/api/v2/suggest", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { ...sid, "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ kind, quote, index, image_url: imageUrl }),
     });
     const data = (await res.json().catch(() => ({}))) as { options?: unknown[]; error?: string };
@@ -355,6 +388,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     const at = quote.items?.length ?? 0;
     setItems((list) => [...list, normalizeItem({ name: s.name, description: s.description ?? "", unit: DEFAULT_UNIT })]);
     setSuggestions((prev) => prev.filter((_, j) => j !== i));
+    ev("suggestion_added");
     setFlash([at]);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlash([]), 2200);
@@ -373,11 +407,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         const file = await shrinkImage(f);
         const fd = new FormData();
         fd.append("file", file, file.name);
-        const res = await fetch("/api/v2/upload-photo", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+        const res = await fetch("/api/v2/upload-photo", { method: "POST", headers: { ...sid, Authorization: `Bearer ${token}` }, body: fd });
         const data = (await res.json().catch(() => ({}))) as { url?: string };
         if (!res.ok || !data.url) throw new Error();
         const url = data.url;
         setQuote((prev) => ({ ...prev, images: [...(prev.images ?? []), url] }));
+        ev("photo_added");
         setPhotoBusy("✨ מסתכל על התמונה...");
         const opts = (await aiSuggest("photo", undefined, url).catch(() => [])) as Suggestion[];
         setSuggestions((prev) => {
@@ -391,11 +426,14 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setPhotoBusy(failed ? `${failed === 1 ? "תמונה אחת לא עלתה" : `${failed} תמונות לא עלו`} — נסה שוב` : "");
   }, [quote.images, quote.items, token, aiSuggest]);
 
-  const removePhoto = useCallback((url: string) =>
-    setQuote((prev) => ({ ...prev, images: (prev.images ?? []).filter((u) => u !== url) })), []);
+  const removePhoto = useCallback((url: string) => {
+    ev("photo_removed");
+    setQuote((prev) => ({ ...prev, images: (prev.images ?? []).filter((u) => u !== url) }));
+  }, []);
 
   const resumeDraft = useCallback(() => {
     if (!pendingDraft) return;
+    ev("draft_resumed");
     setMessages(pendingDraft.messages.length ? pendingDraft.messages : [{ role: "assistant", content: greeting }]);
     setQuote(pendingDraft.quote);
     setRestored(true);
@@ -403,6 +441,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   }, [pendingDraft, greeting]);
 
   const discardDraft = useCallback(() => {
+    ev("draft_discarded");
     clearDraft(aiContext.user_id);
     setPendingDraft(null);
   }, [aiContext.user_id]);
@@ -417,6 +456,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     }
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     setConfirmNew(false);
+    ev("new_quote", { items: quote.items?.length ?? 0 });
     clearDraft(aiContext.user_id);
     setQuote({});
     setMessages([{ role: "assistant", content: greeting }]);
@@ -426,35 +466,50 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setInput("");
     setSuggestions([]);
     setUndo(null);
-  }, [confirmNew, aiContext.user_id, greeting]);
+  }, [confirmNew, aiContext.user_id, greeting, quote.items?.length]);
 
   // ── Save to Bubble ──────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (saveState === "saving" || saveState === "saved") return;
     setSaveState("saving");
     setSaveError("");
+    ev("save_clicked", { mode: quote.pricing_mode ?? "total" });
     try {
       const res = await fetch("/api/v2/approve-quote", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { ...sid, "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ quote: { ...quote, has_tax: quote.has_tax ?? false }, bubble_env: bubbleEnv }),
       });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; redirect_url?: string; message?: string };
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; quote_id?: string; redirect_url?: string; message?: string };
       if (!res.ok || !data.ok) throw new Error(data.message ?? `HTTP ${res.status}`);
       setSaveState("saved");
+      tracking.saved = true;
       clearDraft(aiContext.user_id);
-      if (data.redirect_url) {
-        const url = data.redirect_url;
-        setTimeout(() => {
-          if (window.parent !== window) window.parent.postMessage({ type: "quote_redirect", url }, "*");
-          else window.location.href = url;
-        }, 2500);
-      }
+      setSaved({ quote_id: data.quote_id, url: data.redirect_url }); // ⭐ review card, then on to the quote in Bubble
     } catch (e) {
       setSaveState("error");
       setSaveError(e instanceof Error ? e.message : String(e));
+      ev("save_failed", { error: e instanceof Error ? e.message.slice(0, 40) : "" });
     }
   }, [saveState, token, quote, bubbleEnv, aiContext.user_id]);
+
+  // After saving: 1-5 stars + a short comment (same /api/review as the old chat), then open the quote in Bubble.
+  const [saved, setSaved] = useState<{ quote_id?: string; url?: string } | null>(null);
+  const finishReview = useCallback((stars: number, comment: string) => {
+    ev("review", { stars, comment: !!comment.trim(), skipped: !stars });
+    if (stars) {
+      fetch("/api/review", {
+        method: "POST", keepalive: true,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ quote_id: saved?.quote_id, stars, comment: comment.trim().slice(0, 500) }),
+      }).catch(() => {});
+    }
+    const url = saved?.url;
+    if (!url) return;
+    if (window.parent !== window) window.parent.postMessage({ type: "quote_redirect", url }, "*");
+    else window.location.href = url;
+  }, [saved, token]);
+  const review = saved ? <ReviewCard onDone={finishReview} /> : null;
 
   // ── Render ──────────────────────────────────────────────────────────────────
   const composer = (
@@ -475,7 +530,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   const undoBtn = undo && hasQuote && !isLoading ? (
     <button
-      onClick={() => { setQuote(undo); setUndo(null); setFlash([]); }}
+      onClick={() => { setQuote(undo); setUndo(null); setFlash([]); ev("undo"); }}
       style={{ ...chipStyle, display: "block", margin: "0 0 8px", fontSize: 12, padding: "5px 12px", color: "#4b5563", background: "#fff" }}
     >↩ בטל את השינוי האחרון של ה-AI</button>
   ) : null;
@@ -517,7 +572,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       onEdit={edit}
       onEditClient={editClient}
       onSetItems={setItems}
-      onSwitchMode={(m) => setQuote((prev) => switchMode(prev, m))}
+      onSwitchMode={(m) => { ev("mode_switched", { to: m }); setQuote((prev) => switchMode(prev, m)); }}
       onSave={handleSave}
       saveState={saveState}
       saveError={saveError}
@@ -563,6 +618,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     const showChat = chatOpen || !hasQuote;
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
+        {review}
         {header}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
           {showChat ? (
@@ -607,6 +663,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   // 3) Desktop — quote and chat side by side
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
+      {review}
       <div style={{ flex: 1, display: "flex", minHeight: 0, direction: "ltr" }}>
         {hasQuote && (
           <div style={{ width: "46%", minWidth: 340, borderRight: "1px solid #e5e7eb", display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -809,6 +866,50 @@ function VoiceRing({ getLevel }: { getLevel: () => number }) {
   return <div ref={ref} aria-hidden style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "#fee2e2", transform: "scale(1.12)" }} />;
 }
 
+/** After saving: tap a star (and optionally write a line), or skip. Untouched for 10s → move on. */
+function ReviewCard({ onDone }: { onDone: (stars: number, comment: string) => void }) {
+  const [stars, setStars] = useState(0);
+  const [comment, setComment] = useState("");
+  const [touched, setTouched] = useState(false);
+  const doneRef = useRef(onDone);
+  const fired = useRef(false);
+  useEffect(() => { doneRef.current = onDone; });
+  const finish = (s: number, c: string) => { if (fired.current) return; fired.current = true; doneRef.current(s, c); };
+  useEffect(() => {
+    if (touched) return;
+    const t = setTimeout(() => { if (!fired.current) { fired.current = true; doneRef.current(0, ""); } }, 10000);
+    return () => clearTimeout(t);
+  }, [touched]);
+  return (
+    <div dir="rtl" style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(17,24,39,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: "100%", maxWidth: 380, background: "#fff", borderRadius: 18, padding: "20px 18px", textAlign: "center", color: "#1a1a2e" }}>
+        <div style={{ fontSize: 30 }}>✓</div>
+        <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4 }}>ההצעה נשמרה</div>
+        <div style={{ fontSize: 14, color: "#4b5563", marginTop: 12 }}>איך היה ליצור הצעה עם AI?</div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 8, direction: "ltr" }}>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button key={n} onClick={() => { setStars(n); setTouched(true); }} aria-label={`${n} כוכבים`} style={{
+              border: "none", background: "transparent", cursor: "pointer", fontSize: 32, lineHeight: 1, padding: 2, color: n <= stars ? "#f59e0b" : "#d1d5db",
+            }}>★</button>
+          ))}
+        </div>
+        {stars > 0 && (
+          <textarea value={comment} onChange={(e) => setComment(e.target.value)} onFocus={() => setTouched(true)} rows={2}
+            placeholder={stars >= 4 ? "מה הכי עזר לך? (לא חובה)" : "מה היה חסר או מבלבל? (לא חובה)"}
+            style={{ width: "100%", boxSizing: "border-box", marginTop: 10, border: "1px solid #e5e7eb", borderRadius: 10, padding: "8px 10px", fontSize: 15, fontFamily: "inherit", resize: "none", direction: "rtl" }} />
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <button onClick={() => finish(stars, comment)} disabled={!stars} style={{
+            flex: 1, padding: "11px 14px", borderRadius: 12, border: "none", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: stars ? "pointer" : "default",
+            background: stars ? `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})` : "#e8eaed", color: stars ? "#fff" : "#9ca3af",
+          }}>שליחה ומעבר להצעה</button>
+          <button onClick={() => finish(0, "")} style={{ ...chipStyle, padding: "11px 14px" }}>דלג</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AiAvatar() {
   return (
     <span aria-hidden style={{
@@ -914,6 +1015,7 @@ function QuotePanelV2({
         next.splice(to, 0, moved);
         return next;
       });
+      ev("item_moved");
     }
     setDrag(null);
   };
@@ -989,13 +1091,13 @@ function QuotePanelV2({
                 <ItemEditor
                   item={it}
                   perItem={perItem}
-                  onDone={(patch) => { updateItem(i, patch); setEditingIdx(null); }}
+                  onDone={(patch) => { updateItem(i, patch); setEditingIdx(null); ev("item_edited"); }}
                   onCancel={() => {
                     // A new item that never got a name is removed rather than left blank.
                     if (!it.name.trim()) onSetItems((list) => list.filter((_, j) => j !== i));
                     setEditingIdx(null);
                   }}
-                  onDelete={() => { onSetItems((list) => list.filter((_, j) => j !== i)); setEditingIdx(null); }}
+                  onDelete={() => { onSetItems((list) => list.filter((_, j) => j !== i)); setEditingIdx(null); ev("item_deleted"); }}
                   onReword={() => aiSuggest("item", i) as Promise<Suggestion[]>}
                 />
               ) : (
@@ -1027,7 +1129,7 @@ function QuotePanelV2({
             </div>
           ))}
           <button
-            onClick={() => { onSetItems((list) => [...list, normalizeItem({ name: "", unit: DEFAULT_UNIT })]); setEditingIdx(items.length); }}
+            onClick={() => { onSetItems((list) => [...list, normalizeItem({ name: "", unit: DEFAULT_UNIT })]); setEditingIdx(items.length); ev("item_added"); }}
             style={{ ...chipStyle, marginTop: 10, fontSize: 13 }}
           >+ הוספת פריט</button>
           {suggestions.length > 0 && (
@@ -1082,7 +1184,7 @@ function QuotePanelV2({
             להוסיף מע״מ 18%
           </label>
           {!perItem && (quote.total ?? 0) > 0 && (
-            <button onClick={() => onEdit({ total: exVat(quote.total ?? 0), has_tax: true })} style={{ ...chipStyle, display: "block", marginTop: 8, fontSize: 12, padding: "5px 12px", background: "#fff" }}>
+            <button onClick={() => { onEdit({ total: exVat(quote.total ?? 0), has_tax: true }); ev("vat_converted", { where: "total" }); }} style={{ ...chipStyle, display: "block", marginTop: 8, fontSize: 12, padding: "5px 12px", background: "#fff" }}>
               המחיר כולל מע״מ — הורד מע״מ ({formatILS(exVat(quote.total ?? 0))})
             </button>
           )}
@@ -1195,7 +1297,7 @@ function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
         </div>
       )}
       {perItem && parse(d.unit_price) > 0 && (
-        <button onClick={() => setD({ ...d, unit_price: String(exVat(parse(d.unit_price))) })} style={{ ...chipStyle, alignSelf: "flex-start", fontSize: 12, padding: "5px 12px" }}>
+        <button onClick={() => { setD({ ...d, unit_price: String(exVat(parse(d.unit_price))) }); ev("vat_converted", { where: "item" }); }} style={{ ...chipStyle, alignSelf: "flex-start", fontSize: 12, padding: "5px 12px" }}>
           המחיר כולל מע״מ — הורד מע״מ ({formatILS(exVat(parse(d.unit_price)))})
         </button>
       )}
