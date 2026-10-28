@@ -61,6 +61,22 @@ function clearDraft(userId?: string) {
   try { localStorage.removeItem(draftKey(userId)); } catch { /* ignore */ }
 }
 
+/** On to the saved quote in Bubble (the parent page listens for quote_redirect). */
+function openQuote(url?: string) {
+  if (!url) return;
+  if (window.parent !== window) window.parent.postMessage({ type: "quote_redirect", url }, "*");
+  else window.location.href = url;
+}
+
+// ── Stars after saving: the first save, then at most once a week per user (always in version-test) ──
+const reviewKey = (userId?: string) => `quote_v2_review_at:${userId ?? "anon"}`;
+function reviewDue(userId?: string): boolean {
+  try { return Date.now() - Number(localStorage.getItem(reviewKey(userId)) ?? 0) > 7 * 24 * 3600 * 1000; } catch { return true; }
+}
+function markReviewShown(userId?: string) {
+  try { localStorage.setItem(reviewKey(userId), String(Date.now())); } catch { /* ignore */ }
+}
+
 const buzz = (ms: number | number[]) => { try { navigator.vibrate?.(ms); } catch { /* iOS: not supported */ } };
 
 // ── Usage events → /api/v2/event → Supabase. What people did, never quote content. ──
@@ -485,7 +501,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       setSaveState("saved");
       tracking.saved = true;
       clearDraft(aiContext.user_id);
-      setSaved({ quote_id: data.quote_id, url: data.redirect_url }); // ⭐ review card, then on to the quote in Bubble
+      if (bubbleEnv === "test" || reviewDue(aiContext.user_id)) {
+        markReviewShown(aiContext.user_id);
+        setSaved({ quote_id: data.quote_id, url: data.redirect_url }); // ⭐ review card, then on to the quote in Bubble
+      } else {
+        openQuote(data.redirect_url);
+      }
     } catch (e) {
       setSaveState("error");
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -504,10 +525,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         body: JSON.stringify({ quote_id: saved?.quote_id, stars, comment: comment.trim().slice(0, 500) }),
       }).catch(() => {});
     }
-    const url = saved?.url;
-    if (!url) return;
-    if (window.parent !== window) window.parent.postMessage({ type: "quote_redirect", url }, "*");
-    else window.location.href = url;
+    openQuote(saved?.url);
   }, [saved, token]);
   const review = saved ? <ReviewCard onDone={finishReview} /> : null;
 
@@ -894,8 +912,8 @@ function ReviewCard({ onDone }: { onDone: (stars: number, comment: string) => vo
           ))}
         </div>
         {stars > 0 && (
-          <textarea value={comment} onChange={(e) => setComment(e.target.value)} onFocus={() => setTouched(true)} rows={2}
-            placeholder={stars >= 4 ? "מה הכי עזר לך? (לא חובה)" : "מה היה חסר או מבלבל? (לא חובה)"}
+          <textarea key={stars <= 2 ? "low" : "ok"} autoFocus={stars <= 2} value={comment} onChange={(e) => setComment(e.target.value)} onFocus={() => setTouched(true)} rows={2}
+            placeholder={stars >= 4 ? "מה הכי עזר לך? (לא חובה)" : stars <= 2 ? "מה לא עבד? נשמח לשמוע כדי לתקן" : "מה היה חסר או מבלבל? (לא חובה)"}
             style={{ width: "100%", boxSizing: "border-box", marginTop: 10, border: "1px solid #e5e7eb", borderRadius: 10, padding: "8px 10px", fontSize: 15, fontFamily: "inherit", resize: "none", direction: "rtl" }} />
         )}
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
