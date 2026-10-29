@@ -22,7 +22,7 @@ export function formatSummary(q: Partial<QuoteV2>): string {
 
   const t = computeTotals(q);
   if (!perItem && !t.subtotal) {
-    lines.push("_עוד אין מחיר_");
+    lines.push("💰 מה המחיר שתרצו?");
   } else {
     if (t.discount) {
       lines.push(`סה״כ: ${formatILS(t.subtotal)}`);
@@ -35,5 +35,6 @@ export function formatSummary(q: Partial<QuoteV2>): string {
     lines.push(`*לתשלום: ${formatILS(t.grandTotal)}*${q.has_tax === false ? " (בלי מע״מ)" : ""}`);
     if (t.missingPrices) lines.push(`_${t.missingPrices === 1 ? "פריט אחד" : `${t.missingPrices} פריטים`} בלי מחיר_`);
   }
+  if (!q.client?.name) lines.push("", "על הדרך, רשמו לי גם את שם הלקוח שאשים על ההצעה 🙂");
   return lines.join("\n");
 }
