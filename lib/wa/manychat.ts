@@ -3,6 +3,7 @@
  * ManyChat waits ~10s for a response and an AI turn (+ transcription) can take longer.
  * The text goes into the custom field `wa_quote_reply`, then a ManyChat flow shows it:
  *   MANYCHAT_FLOW_SUMMARY — {{wa_quote_reply}} + buttons "לשמור" / "לשנות"
+ *   MANYCHAT_FLOW_SAVED   — {{wa_quote_reply}} + button "הצעה חדשה" (→ the "התחלה" automation)
  *   MANYCHAT_FLOW_TEXT    — {{wa_quote_reply}} only
  * Buttons and wording live in ManyChat, so they can change without a deploy.
  */
@@ -28,10 +29,14 @@ async function call(path: string, body: Record<string, unknown>): Promise<void> 
   }
 }
 
-export type ReplyKind = "summary" | "text";
+export type ReplyKind = "summary" | "saved" | "text";
+
+/** "saved" has its own flow (button "הצעה חדשה") once MANYCHAT_FLOW_SAVED is set; until then, plain text. */
+export const hasSavedFlow = () => !!process.env.MANYCHAT_FLOW_SAVED;
 
 export async function reply(contactId: string, text: string, kind: ReplyKind = "text"): Promise<void> {
-  const flow = kind === "summary" ? process.env.MANYCHAT_FLOW_SUMMARY : process.env.MANYCHAT_FLOW_TEXT;
+  if (kind === "saved" && !hasSavedFlow()) kind = "text";
+  const flow = { summary: process.env.MANYCHAT_FLOW_SUMMARY, saved: process.env.MANYCHAT_FLOW_SAVED, text: process.env.MANYCHAT_FLOW_TEXT }[kind];
   if (!flow) throw new Error(`MANYCHAT_FLOW_${kind.toUpperCase()} not configured`);
   const subscriber_id = Number(contactId);
   await call("/subscriber/setCustomFieldByName", {

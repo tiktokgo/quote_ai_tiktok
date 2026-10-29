@@ -5,7 +5,7 @@ import { transcribeWithUsage } from "@/lib/voiceQuote";
 import { track, costUsd } from "@/lib/v2/track";
 import { runTurn } from "@/lib/wa/ai";
 import { lookupUser, saveQuote } from "@/lib/wa/bubble";
-import { reply, endConversation } from "@/lib/wa/manychat";
+import { reply, endConversation, hasSavedFlow } from "@/lib/wa/manychat";
 import { loadSession, saveSession, deleteSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
 import { isVoiceUrl, downloadVoice } from "@/lib/wa/audio";
@@ -29,7 +29,9 @@ const T = {
   upgrade: "ניצלת את 5 ההצעות החינמיות. כדי להמשיך ליצור הצעות עם AI, אפשר לשדרג את המנוי באפליקציה של תיקתוק.",
   noSpeech: "לא הצלחתי לשמוע את ההקלטה 🙈 אפשר לנסות שוב, או לכתוב.",
   nothingToSave: "עוד אין הצעה לשמור. ספרו לי למי ההצעה ומה העבודה.",
-  saved: (url?: string) => `✅ הצעת המחיר נשמרה כטיוטה בתיקתוק.${url ? `\nלצפייה, עריכה ושליחה ללקוח:\n${url}` : ""}`,
+  saved: (url?: string) =>
+    `✅ הצעת המחיר נשמרה כטיוטה בתיקתוק.${url ? `\nלצפייה, עריכה ושליחה ללקוח:\n${url}` : ""}\n\n` +
+    (hasSavedFlow() ? "רוצים להכין עוד הצעה? 👇" : "רוצים להכין עוד הצעה? כתבו \"התחלה\"."),
   cancelled: "ההצעה בוטלה. כדי להתחיל חדשה כתבו \"התחלה\".",
   expired: "ההצעה הזו כבר לא פתוחה. כדי להתחיל חדשה כתבו \"התחלה\".",
   error: "משהו השתבש אצלנו 😕 נסו שוב בעוד רגע.",
@@ -114,7 +116,7 @@ async function handle(contactId: string, msg: { text: string; audioUrl: string; 
       if (!session.quote.items?.length) { await reply(contactId, T.nothingToSave); return report({ result: "nothing_to_save" }); }
       const saved = await saveQuote(session.quote, user.userId);
       await deleteSession(contactId);
-      await reply(contactId, T.saved(saved.url));
+      await reply(contactId, T.saved(saved.url), "saved");
       await endConversation(contactId);
       return report({ result: "saved", mode: session.quote.pricing_mode ?? null, items: session.quote.items.length });
     }
