@@ -10,7 +10,8 @@ import type { QuoteV2, QuoteUpdateV2 } from "@/lib/v2/quote";
  * One AI turn for the WhatsApp quote chat. Same model, prompt, guard and merge as
  * /api/v2/chat — copied here on purpose so the live /v2 popup is not touched
  * (tiktok-hq/docs/whatsapp-quote.md). Merge the two once WhatsApp is stable.
- * Differences: no suggested_items (WhatsApp has no chips), and a channel note.
+ * Differences: a channel note, and suggested_items are shown as a numbered list in the summary
+ * (no chips) — the user answers with numbers ("תוסיף 1 ו-3").
  */
 
 const UPDATE_QUOTE_TOOL: OpenAI.Chat.ChatCompletionTool = {
@@ -57,6 +58,15 @@ const UPDATE_QUOTE_TOOL: OpenAI.Chat.ChatCompletionTool = {
         warranty: { type: "string" },
         terms: { type: "string" },
         comments: { type: "string" },
+        suggested_items: {
+          type: "array",
+          description: "4-6 related items the user did NOT mention, offered as optional additions. Never also put them in items.",
+          items: {
+            type: "object",
+            required: ["name"],
+            properties: { name: { type: "string" }, description: { type: "string" } },
+          },
+        },
       },
     },
   },
@@ -65,10 +75,15 @@ const UPDATE_QUOTE_TOOL: OpenAI.Chat.ChatCompletionTool = {
 const WHATSAPP_NOTE =
   `## ערוץ: וואטסאפ\n` +
   `המשתמש כותב או מקליט לך מוואטסאפ, בלי מסך. אחרי כל update_quote המערכת שולחת לו סיכום של ההצעה עם כפתורים "לשמור" ו"לשנות".\n` +
-  `לכן: אל תכתוב את ההצעה או את הפריטים בטקסט, ואל תשלח suggested_items. 1-2 משפטים קצרים בלבד.\n` +
+  `לכן: אל תכתוב את ההצעה, הפריטים או ה-suggested_items בטקסט (הסיכום מציג את ה-suggested_items כרשימה ממוספרת). 1-2 משפטים קצרים בלבד.\n` +
   `כשאין מה לשאול: "אפשר לשמור, או לכתוב / להקליט מה לשנות."`;
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
+export type Suggestion = { name: string; description?: string };
+/** The quote kept in wa_sessions: the draft, plus the items last offered in the summary. */
+export type WaQuote = Partial<QuoteV2> & { suggested_items?: Suggestion[] };
+
+const MAX_SUGGESTIONS = 6;
 
 /** What to ask next when the model updated the quote but wrote no text. */
 function nextQuestion(q: Partial<QuoteV2>): string {
@@ -84,17 +99,28 @@ const FALSE_UPDATE = /(עדכנתי|הוספתי|שמרתי|נרשם|הכנתי|
 
 export interface TurnResult {
   text: string;
-  quote: Partial<QuoteV2>;
+  quote: WaQuote;
   updated: boolean;
   cost: number;
   flags: { forced: boolean; refilled: boolean };
 }
 
-export async function runTurn(openai: OpenAI, ctx: AIContext, history: ChatMessage[], current: Partial<QuoteV2>): Promise<TurnResult> {
+export async function runTurn(openai: OpenAI, ctx: AIContext, history: ChatMessage[], draft: WaQuote): Promise<TurnResult> {
+  const { suggested_items: offered = [], ...current } = draft;
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: "system", content: buildSystemPromptV2(ctx) },
     { role: "system", content: WHATSAPP_NOTE },
   ];
+  if (offered.length) {
+    messages.push({
+      role: "system",
+      content:
+        `## פריטים שהוצעו למשתמש בסיכום האחרון (ממוספרים)\n` +
+        offered.map((s, i) => `${i + 1}. ${s.name}${s.description ? ` — ${s.description}` : ""}`).join("\n") +
+        `\nכשהמשתמש עונה במספרים ("תוסיף 1 ו-3", "כן 2,4", "את כולם") — הוסף בדיוק את הפריטים האלה ל-items ` +
+        `(רשימה מלאה, כולל הקיימים), עם ה-name וה-description שלהם. במצב per_item: unit_price=0 אם לא נאמר מחיר.`,
+    });
+  }
   if (Object.keys(current).length > 0) {
     const t = computeTotals(current);
     messages.push({
@@ -152,8 +178,10 @@ export async function runTurn(openai: OpenAI, ctx: AIContext, history: ChatMessa
     }
   }
 
-  let merged = current;
+  let merged: Partial<QuoteV2> = current;
+  let suggestions = offered;
   if (update) {
+    if (Array.isArray(update.suggested_items) && update.suggested_items.length) suggestions = update.suggested_items;
     delete update.suggested_items;
     const lastUser = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
     update = guardUpdate(current, update, lastUser);
@@ -187,5 +215,10 @@ export async function runTurn(openai: OpenAI, ctx: AIContext, history: ChatMessa
   }
   if (!text.trim()) text = "לא הבנתי — אפשר לנסח שוב?";
 
-  return { text: text.trim().slice(0, 400), quote: merged, updated: !!update, cost, flags };
+  // Offer only what is not in the quote yet; numbering follows this list, which is what the summary shows.
+  const inQuote = new Set((merged.items ?? []).map((it) => it.name.trim()));
+  suggestions = suggestions.filter((s) => s?.name && !inQuote.has(s.name.trim())).slice(0, MAX_SUGGESTIONS);
+  const quote: WaQuote = suggestions.length ? { ...merged, suggested_items: suggestions } : merged;
+
+  return { text: text.trim().slice(0, 400), quote, updated: !!update, cost, flags };
 }

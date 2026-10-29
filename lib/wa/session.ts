@@ -1,5 +1,4 @@
-import type { QuoteV2 } from "@/lib/v2/quote";
-import type { ChatMessage } from "./ai";
+import type { ChatMessage, WaQuote } from "./ai";
 
 /**
  * One open quote conversation per WhatsApp contact — Supabase table `wa_sessions`
@@ -11,7 +10,7 @@ export interface WaSession {
   contact_id: string;
   user_id: string;
   messages: ChatMessage[];
-  quote: Partial<QuoteV2>;
+  quote: WaQuote;
   updated_at?: string;
 }
 

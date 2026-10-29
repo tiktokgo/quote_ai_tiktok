@@ -1,8 +1,8 @@
 import { computeTotals, formatILS, formatQty, lineTotal } from "@/lib/v2/quote";
-import type { QuoteV2 } from "@/lib/v2/quote";
+import type { WaQuote } from "./ai";
 
 /** The quote as a WhatsApp message (*bold* is WhatsApp markup). Totals come from computeTotals, never from the AI. */
-export function formatSummary(q: Partial<QuoteV2>): string {
+export function formatSummary(q: WaQuote): string {
   const lines: string[] = [];
   lines.push(`*${q.title || "הצעת מחיר"}*`);
   const client = [q.client?.name, q.client?.address].filter(Boolean).join(", ");
@@ -33,8 +33,16 @@ export function formatSummary(q: Partial<QuoteV2>): string {
       lines.push(`מע״מ 18%: ${formatILS(t.vat)}`);
     }
     lines.push(`*לתשלום: ${formatILS(t.grandTotal)}*${q.has_tax === false ? " (בלי מע״מ)" : ""}`);
+    if (q.has_tax === undefined) lines.push("להוסיף מע״מ למחיר?");
     if (t.missingPrices) lines.push(`_${t.missingPrices === 1 ? "פריט אחד" : `${t.missingPrices} פריטים`} בלי מחיר_`);
   }
   if (!q.client?.name) lines.push("", "על הדרך, רשמו לי גם את שם הלקוח שאשים על ההצעה 🙂");
+
+  // runTurn keeps this list in the same order, so "תוסיף 1 ו-3" means these numbers.
+  if (q.suggested_items?.length) {
+    lines.push("", "*אפשר להוסיף גם:*");
+    q.suggested_items.forEach((s, i) => lines.push(`${i + 1}. ${s.name}`));
+    lines.push("_רוצים? כתבו את המספרים, למשל: תוסיף 1 ו-3_");
+  }
   return lines.join("\n");
 }
