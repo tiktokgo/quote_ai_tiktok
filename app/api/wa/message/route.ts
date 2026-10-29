@@ -140,7 +140,7 @@ async function handle(contactId: string, msg: { text: string; audioUrl: string; 
     await saveSession(session);
 
     const hasQuote = !!session.quote.items?.length;
-    if (turn.updated && hasQuote) await reply(contactId, `${turn.text}\n\n${formatSummary(session.quote)}`, "summary");
+    if (turn.updated && hasQuote) await reply(contactId, formatSummary(session.quote, turn.text), "summary");
     else await reply(contactId, turn.text);
     return report({ result: "ai_reply", updated: turn.updated, items: session.quote.items?.length ?? 0, turn: session.messages.length, ...turn.flags });
   } catch (err) {
