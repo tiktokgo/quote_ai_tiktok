@@ -5,7 +5,7 @@ import { transcribeWithUsage } from "@/lib/voiceQuote";
 import { track, costUsd } from "@/lib/v2/track";
 import { runTurn } from "@/lib/wa/ai";
 import { lookupUser, saveQuote } from "@/lib/wa/bubble";
-import { reply, endConversation, hasSavedFlow } from "@/lib/wa/manychat";
+import { reply, endConversation, hasSavedFlow, lastInput } from "@/lib/wa/manychat";
 import { loadSession, saveSession, deleteSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
 import { isVoiceUrl, downloadVoice } from "@/lib/wa/audio";
@@ -16,7 +16,8 @@ export const maxDuration = 60;
 /**
  * POST /api/wa/message — called by a ManyChat External Request (tiktok-hq/docs/whatsapp-quote.md).
  * Header x-wa-secret: WA_WEBHOOK_SECRET.
- * Body: { contact_id, text?, audio_url?, action?: "start" | "save" | "cancel" }
+ * Body: { contact_id, text?, audio_url?, action?: "start" | "save" | "cancel" | "message" }
+ * action "message" = read the last message from ManyChat (the Default Reply router sends this).
  * Answers at once ({ ok: true }) and replies on WhatsApp through the ManyChat API,
  * because ManyChat stops waiting after ~10s.
  */
@@ -64,26 +65,41 @@ export async function POST(req: NextRequest) {
   const contactId = String(body.contact_id ?? "").trim();
   if (!/^\d{1,20}$/.test(contactId)) return Response.json({ ok: false, error: "bad_contact_id" }, { status: 400 });
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-  let text = str(body.text).slice(0, 4000);
-  let audioUrl = str(body.audio_url);
-  let action = str(body.action);
-  // ManyChat may hand us a voice note as the "text" of the message.
-  if (!audioUrl && isVoiceUrl(text)) { audioUrl = text; text = ""; }
-  if (!action && SAVE_WORDS.test(text)) action = "save";
-  if (!action && CANCEL_WORDS.test(text)) action = "cancel";
-  if (action && !["start", "save", "cancel"].includes(action)) return Response.json({ ok: false, error: "bad_action" }, { status: 400 });
-  if (!action && !text && !audioUrl) return Response.json({ ok: false, error: "empty" }, { status: 400 });
+  const action = str(body.action);
+  if (action && !["start", "save", "cancel", "message"].includes(action)) return Response.json({ ok: false, error: "bad_action" }, { status: 400 });
+  const msg = action === "message" ? null : toMessage(str(body.text), str(body.audio_url), action);
+  if (msg && !msg.action && !msg.text && !msg.audioUrl) return Response.json({ ok: false, error: "empty" }, { status: 400 });
 
-  after(() => handle(contactId, { text, audioUrl, action }));
+  after(() => handle(contactId, msg));
   return Response.json({ ok: true });
 }
 
-async function handle(contactId: string, msg: { text: string; audioUrl: string; action: string }) {
+type Msg = { text: string; audioUrl: string; action: string };
+
+function toMessage(text: string, audioUrl: string, action: string): Msg {
+  text = text.slice(0, 4000);
+  // ManyChat hands us a voice note as the "text" of the message.
+  if (!audioUrl && isVoiceUrl(text)) { audioUrl = text; text = ""; }
+  if (!action && SAVE_WORDS.test(text)) action = "save";
+  if (!action && CANCEL_WORDS.test(text)) action = "cancel";
+  return { text, audioUrl, action };
+}
+
+/**
+ * msg null = action "message": read the user's last message from ManyChat ourselves.
+ * Putting it in the External Request body breaks the JSON when it has a quote (מע"מ) or a line break.
+ */
+async function handle(contactId: string, incoming: Msg | null) {
   let userId: string | undefined;
   let cost = 0;
+  let msg: Msg = incoming ?? { text: "", audioUrl: "", action: "" };
   const report = (props: Record<string, string | number | boolean | null>) =>
     track({ event: "wa_message", user_id: userId, session_id: `wa:${contactId}`, cost_usd: cost || undefined, props: { ...props, voice: !!msg.audioUrl, action: msg.action || null } });
   try {
+    if (!incoming) {
+      msg = toMessage((await lastInput(contactId)).trim(), "", "");
+      if (!msg.action && !msg.text && !msg.audioUrl) return report({ result: "empty" });
+    }
     const user = await lookupUser(contactId);
     if (!user) { await reply(contactId, T.noAccount()); await endConversation(contactId); return report({ result: "no_account" }); }
     userId = user.userId;

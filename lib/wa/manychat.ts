@@ -29,7 +29,21 @@ async function call(path: string, body: Record<string, unknown>): Promise<void> 
   }
 }
 
-export type ReplyKind = "summary" | "saved" | "text";
+/** The contact's last message (text, or the voice-note URL) — ManyChat system field last_input_text. */
+export async function lastInput(contactId: string): Promise<string> {
+  const key = process.env.MANYCHAT_API_KEY;
+  if (!key) throw new Error("MANYCHAT_API_KEY not configured");
+  const res = await fetch(`${API}/subscriber/getInfo?subscriber_id=${encodeURIComponent(contactId)}`, {
+    headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(10000),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(`manychat getInfo HTTP ${res.status}: ${text.slice(0, 200)}`);
+  const v = (JSON.parse(text) as { data?: { last_input_text?: unknown } }).data?.last_input_text;
+  return typeof v === "string" ? v : "";
+}
+
+export type ReplyKind ="summary" | "saved" | "text";
 
 /** "saved" has its own flow (button "הצעה חדשה") once MANYCHAT_FLOW_SAVED is set; until then, plain text. */
 export const hasSavedFlow = () => !!process.env.MANYCHAT_FLOW_SAVED;
