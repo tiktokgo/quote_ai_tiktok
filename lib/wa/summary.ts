@@ -3,7 +3,8 @@ import type { WaQuote } from "./ai";
 
 // Starts each list line right-to-left, so WhatsApp keeps the bullet on the right.
 const RLM = "‏";
-const NOTE_MAX = 120;
+const NOTE_MAX = 160;
+const DETAILS_UP_TO = 3;
 const short = (s: string) => (s.length > NOTE_MAX ? `${s.slice(0, NOTE_MAX).trim()}…` : s);
 
 /**
@@ -19,6 +20,8 @@ export function formatSummary(q: WaQuote, aiText = ""): string {
   lines.push("");
 
   const perItem = q.pricing_mode === "per_item";
+  // With a few items, show what each includes; a long list stays one line per item.
+  const withDetails = (q.items?.length ?? 0) <= DETAILS_UP_TO;
   for (const it of q.items ?? []) {
     if (perItem) {
       const qty = it.quantity !== 1 || it.unit !== "יח'" ? `${formatQty(it.quantity)} ${it.unit} × ${formatILS(it.unit_price)} = ` : "";
@@ -26,6 +29,7 @@ export function formatSummary(q: WaQuote, aiText = ""): string {
     } else {
       lines.push(`${RLM}• ${it.name}`);
     }
+    if (withDetails && it.description?.trim()) lines.push(`${RLM}   _${short(it.description.trim())}_`);
   }
   lines.push("");
 
