@@ -5,7 +5,7 @@ import { transcribeWithUsage } from "@/lib/voiceQuote";
 import { track, costUsd } from "@/lib/v2/track";
 import { runTurn } from "@/lib/wa/ai";
 import { lookupUser, saveQuote } from "@/lib/wa/bubble";
-import { reply } from "@/lib/wa/manychat";
+import { reply, endConversation } from "@/lib/wa/manychat";
 import { loadSession, saveSession, deleteSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
 import { isVoiceUrl, downloadVoice } from "@/lib/wa/audio";
@@ -30,7 +30,8 @@ const T = {
   noSpeech: "לא הצלחתי לשמוע את ההקלטה 🙈 אפשר לנסות שוב, או לכתוב.",
   nothingToSave: "עוד אין הצעה לשמור. ספרו לי למי ההצעה ומה העבודה.",
   saved: (url?: string) => `✅ הצעת המחיר נשמרה כטיוטה בתיקתוק.${url ? `\nלצפייה, עריכה ושליחה ללקוח:\n${url}` : ""}`,
-  cancelled: "ההצעה בוטלה. כדי להתחיל חדשה כתבו \"הצעת מחיר\".",
+  cancelled: "ההצעה בוטלה. כדי להתחיל חדשה כתבו \"התחלה\".",
+  expired: "ההצעה הזו כבר לא פתוחה. כדי להתחיל חדשה כתבו \"התחלה\".",
   error: "משהו השתבש אצלנו 😕 נסו שוב בעוד רגע.",
 };
 
@@ -82,28 +83,39 @@ async function handle(contactId: string, msg: { text: string; audioUrl: string; 
     track({ event: "wa_message", user_id: userId, session_id: `wa:${contactId}`, cost_usd: cost || undefined, props: { ...props, voice: !!msg.audioUrl, action: msg.action || null } });
   try {
     const user = await lookupUser(contactId);
-    if (!user) { await reply(contactId, T.noAccount()); return report({ result: "no_account" }); }
+    if (!user) { await reply(contactId, T.noAccount()); await endConversation(contactId); return report({ result: "no_account" }); }
     userId = user.userId;
-    if (!user.canContinue) { await reply(contactId, T.upgrade); return report({ result: "over_limit" }); }
+    if (!user.canContinue) { await reply(contactId, T.upgrade); await endConversation(contactId); return report({ result: "over_limit" }); }
 
     if (msg.action === "start") {
-      await deleteSession(contactId);
+      // An empty row marks the conversation as open; without one, messages go back to support (below).
+      await saveSession({ contact_id: contactId, user_id: user.userId, messages: [], quote: {} });
       await reply(contactId, T.start);
       return report({ result: "started" });
     }
     if (msg.action === "cancel") {
       await deleteSession(contactId);
       await reply(contactId, T.cancelled);
+      await endConversation(contactId);
       return report({ result: "cancelled" });
     }
 
-    const session = (await loadSession(contactId, user.userId)) ?? { contact_id: contactId, user_id: user.userId, messages: [], quote: {} };
+    const session = await loadSession(contactId, user.userId);
+    // No open conversation (a day without activity, or ManyChat still "on" from before):
+    // no answer, the message stays in Live Chat for a person.
+    // The save button of an old summary still gets an answer.
+    if (!session) {
+      if (msg.action === "save") await reply(contactId, T.expired);
+      await endConversation(contactId);
+      return report({ result: "no_session" });
+    }
 
     if (msg.action === "save") {
       if (!session.quote.items?.length) { await reply(contactId, T.nothingToSave); return report({ result: "nothing_to_save" }); }
       const saved = await saveQuote(session.quote, user.userId);
       await deleteSession(contactId);
       await reply(contactId, T.saved(saved.url));
+      await endConversation(contactId);
       return report({ result: "saved", mode: session.quote.pricing_mode ?? null, items: session.quote.items.length });
     }
 

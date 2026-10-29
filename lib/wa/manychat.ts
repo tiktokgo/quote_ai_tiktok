@@ -9,6 +9,7 @@
 
 const API = "https://api.manychat.com/fb";
 const REPLY_FIELD = "wa_quote_reply";
+const MODE_FIELD = "wa_quote_mode";
 const MAX_TEXT = 3500; // WhatsApp allows 4096
 
 async function call(path: string, body: Record<string, unknown>): Promise<void> {
@@ -39,4 +40,17 @@ export async function reply(contactId: string, text: string, kind: ReplyKind = "
     field_value: text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text,
   });
   await call("/sending/sendFlow", { subscriber_id, flow_ns: flow });
+}
+
+/**
+ * ManyChat sends every message to /api/wa/message while `wa_quote_mode` is "on" (set by "התחלה").
+ * Turning it off hands the chat back to human support. Never throws: a failure here must not
+ * replace a reply the user already got with the error text.
+ */
+export async function endConversation(contactId: string): Promise<void> {
+  try {
+    await call("/subscriber/setCustomFieldByName", { subscriber_id: Number(contactId), field_name: MODE_FIELD, field_value: "off" });
+  } catch (err) {
+    console.error("[wa/manychat] mode off failed:", err instanceof Error ? err.message : err);
+  }
 }
