@@ -4,7 +4,8 @@ import OpenAI from "openai";
 import { verifyToken } from "@/lib/verifyToken";
 import { buildSystemPromptV2 } from "@/lib/v2/systemPrompt";
 import { guardUpdate } from "@/lib/v2/guard";
-import { UNITS, mergeQuoteV2, computeTotals } from "@/lib/v2/quote";
+import { UNITS, mergeQuoteV2, computeTotals, switchMode } from "@/lib/v2/quote";
+import { verifyGuestToken, takeGuestUse, GUEST_CONTEXT, GUEST_USER_ID, GUEST_PROMPT } from "@/lib/v2/guest";
 import type { QuoteV2, QuoteUpdateV2 } from "@/lib/v2/quote";
 
 export const maxDuration = 60;
@@ -89,6 +90,24 @@ const brief = (text: string) => text.trim().slice(0, 400);
 
 const FALSE_UPDATE = /(עדכנתי|הוספתי|שמרתי|נרשם|הכנתי|יצרתי|שיניתי|הסרתי|מחקתי)/;
 
+const GUEST_MAX_CHARS = 2000;
+const GUEST_DONE = "הכנתי טיוטה — אפשר להשלים ולערוך אותה ידנית בחלון ההצעה.";
+
+/** The whole draft as one "total" update: items without prices, the sum in total. */
+function guestTotalOnly(update: QuoteUpdateV2, m: Partial<QuoteV2>): QuoteUpdateV2 {
+  const out: QuoteUpdateV2 = {
+    pricing_mode: "total",
+    items: (m.items ?? []).map((it) => ({ name: it.name, description: it.description })),
+    total: m.total ?? 0,
+    discount_amount: m.discount_amount ?? 0,
+  };
+  for (const k of ["title", "industry", "warranty", "terms", "comments"] as const) if (m[k]) out[k] = m[k];
+  if (m.has_tax !== undefined) out.has_tax = m.has_tax;
+  if (m.client && Object.values(m.client).some(Boolean)) out.client = m.client;
+  if (update.suggested_items) out.suggested_items = update.suggested_items;
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   let body: { messages?: { role: string; content: string }[]; currentQuote?: Partial<QuoteV2>; token?: string };
   try {
@@ -97,21 +116,29 @@ export async function POST(req: NextRequest) {
     return json({ error: "Invalid JSON" }, 400);
   }
 
-  // v2 is for logged-in users only — the context comes from the JWT, never from the client.
+  // The context comes from the JWT, never from the client. A guest token (marketing site)
+  // gets a fixed context and ONE message — see lib/v2/guest.ts.
   const v = verifyToken(body.token ?? "");
-  if (!v.valid) return json({ error: "Invalid token" }, 401);
-  const ctx = v.payload;
+  const gid = v.valid ? null : verifyGuestToken(body.token ?? "");
+  if (!v.valid && !gid) return json({ error: "Invalid token" }, 401);
+  const ctx = v.valid ? v.payload : { ...GUEST_CONTEXT, user_id: GUEST_USER_ID };
 
   if (!Array.isArray(body.messages)) return json({ error: "Missing messages" }, 400);
   const history = body.messages
     .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-    .slice(-MAX_MESSAGES)
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content.slice(0, MAX_CHARS) }));
+    .slice(gid ? -1 : -MAX_MESSAGES)
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content.slice(0, gid ? GUEST_MAX_CHARS : MAX_CHARS) }));
 
-  const current: Partial<QuoteV2> = body.currentQuote && typeof body.currentQuote === "object" ? body.currentQuote : {};
+  // A guest's one message always builds a fresh draft.
+  const current: Partial<QuoteV2> = gid ? {} : body.currentQuote && typeof body.currentQuote === "object" ? body.currentQuote : {};
+
+  if (gid) {
+    if (history[0]?.role !== "user") return json({ error: "Missing messages" }, 400);
+    if (!(await takeGuestUse(req, gid, "ai", sessionOf(req)))) return json({ error: "guest_limit" }, 429);
+  }
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: "system", content: buildSystemPromptV2(ctx) },
+    { role: "system", content: buildSystemPromptV2(ctx) + (gid ? `\n\n${GUEST_PROMPT}` : "") },
   ];
   if (Object.keys(current).length > 0) {
     const t = computeTotals(current);
@@ -139,7 +166,8 @@ export async function POST(req: NextRequest) {
       model: "gpt-4o",
       messages,
       tools: [UPDATE_QUOTE_TOOL],
-      tool_choice: "auto",
+      // A guest has one message and can't answer questions — always build the draft.
+      tool_choice: gid ? { type: "function", function: { name: "update_quote" } } : "auto",
       parallel_tool_calls: false,
       temperature: 0.3,
     });
@@ -205,8 +233,14 @@ export async function POST(req: NextRequest) {
           }
         } catch { /* keep the draft without items */ }
       }
-      console.log(`[v2/chat] mode:${merged.pricing_mode} items:${merged.items?.length ?? 0}`);
-      if (!text.trim()) text = nextQuestion(merged);
+      if (gid) {
+        // Guests get "one price for everything" only (the guest signup webhook takes a total, not prices per item).
+        // Prices said per item become the total here — the AI never adds them up.
+        update = guestTotalOnly(update, switchMode(merged, "total"));
+        merged = mergeQuoteV2(current, update);
+      }
+      console.log(`[v2/chat] mode:${merged.pricing_mode} items:${merged.items?.length ?? 0}${gid ? " guest" : ""}`);
+      if (!text.trim()) text = gid ? GUEST_DONE : nextQuestion(merged);
     }
     if (!text.trim()) text = "לא הבנתי — אפשר לנסח שוב?";
 

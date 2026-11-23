@@ -1,6 +1,7 @@
 import { NextRequest, after } from "next/server";
 import { verifyToken } from "@/lib/verifyToken";
 import { track, cleanProps, type TrackEvent } from "@/lib/v2/track";
+import { verifyGuestToken, GUEST_USER_ID } from "@/lib/v2/guest";
 
 /**
  * POST /api/v2/event — page events for the usage dashboard.
@@ -16,6 +17,8 @@ const EVENTS = new Set([
   "item_added", "item_edited", "item_deleted", "item_moved", "mode_switched", "vat_converted",
   "photo_added", "photo_removed",
   "save_clicked", "save_failed", "review", "left",
+  // guests (marketing site)
+  "guest_cta", "guest_signup_opened", "guest_email_exists", "guest_saved", "guest_save_failed",
 ]);
 
 export async function POST(req: NextRequest) {
@@ -26,7 +29,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false }, { status: 400 });
   }
   const v = verifyToken(body.token ?? "");
-  if (!v.valid) return Response.json({ ok: false }, { status: 401 });
+  const guest = !v.valid && !!verifyGuestToken(body.token ?? "");
+  if (!v.valid && !guest) return Response.json({ ok: false }, { status: 401 });
 
   const events: TrackEvent[] = (Array.isArray(body.events) ? body.events : [])
     .slice(0, 20)
@@ -34,8 +38,9 @@ export async function POST(req: NextRequest) {
     .map((e) => {
       const props = cleanProps(e.props);
       // The business's own name (from the signed token, not the page) — once per visit, so the views can show who it is.
-      if (e.event === "opened") props.company = (v.payload.company_name ?? "").slice(0, 60);
-      return { event: e.event!, user_id: v.payload.user_id, session_id: body.session_id, props };
+      if (v.valid && e.event === "opened") props.company = (v.payload.company_name ?? "").slice(0, 60);
+      if (guest) props.guest = true;
+      return { event: e.event!, user_id: v.valid ? v.payload.user_id : GUEST_USER_ID, session_id: body.session_id, props };
     });
   if (events.length) after(() => track(...events));
   return Response.json({ ok: true });

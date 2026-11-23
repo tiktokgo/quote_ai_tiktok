@@ -26,7 +26,17 @@ interface Props {
   aiContext: AIContext;
   token: string;
   bubbleEnv: "test" | "live";
+  /** Marketing-site visitor without an account (/v2/guest): one AI message, one 20s recording, save = free signup. */
+  guest?: { utmSource?: string; utmMedium?: string };
 }
+
+// ── Guests: one AI message per visitor (the server enforces it too), then "sign up for free" ──
+const GUEST_REC_SEC = 20;
+const GUEST_USED_KEY = "quote_v2_guest_ai_used";
+const guestUsedBefore = () => { try { return localStorage.getItem(GUEST_USED_KEY) === "1"; } catch { return false; } };
+const markGuestUsed = () => { try { localStorage.setItem(GUEST_USED_KEY, "1"); } catch { /* ignore */ } };
+const GUEST_LIMIT_TEXT = "השתמשת בניסיון החינמי של ה-AI. ההרשמה חינמית — ואחריה אפשר לעבוד עם AI ללא הגבלה ולהקליט הודעות ארוכות.";
+const APP_URL = "https://app.tik-tok.co.il/";
 
 const PURPLE = "#7c3aed";
 const PURPLE_2 = "#a855f7";
@@ -124,8 +134,12 @@ const FILE_ERRORS: Record<string, string> = {
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
-  const greeting = `${aiContext.user_name ? `שלום ${aiContext.user_name}! ` : ""}ספר לי על העבודה — מה עושים, למי, וכמה זה עולה (סכום אחד או מחיר לכל פריט). אפשר גם בקול 🎙`;
+export default function ChatPageV2({ aiContext, token, bubbleEnv, guest }: Props) {
+  const isGuest = !!guest;
+  const draftUser = isGuest ? "guest" : aiContext.user_id;
+  const greeting = isGuest
+    ? `ספר לי על העבודה — מה עושים, למי וכמה זה עולה. אפשר גם בקול (עד ${GUEST_REC_SEC} שניות) 🎙`
+    : `${aiContext.user_name ? `שלום ${aiContext.user_name}! ` : ""}ספר לי על העבודה — מה עושים, למי, וכמה זה עולה (סכום אחד או מחיר לכל פריט). אפשר גם בקול 🎙`;
 
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: greeting }]);
   const [quote, setQuote] = useState<Q>({});
@@ -144,6 +158,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   const [isMobile, setIsMobile] = useState(false);
   const [chatOpen, setChatOpen] = useState(false); // mobile: full conversation over the quote
+  const [aiUsed, setAiUsed] = useState(false);     // guest: the one AI message was used
+  const [signupOpen, setSignupOpen] = useState(false);
+  const spendGuestTry = useCallback(() => { setAiUsed(true); markGuestUsed(); }, []);
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -157,8 +174,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   // A saved draft is offered on the start screen ("continue" / "start new") — never opened by itself.
   useEffect(() => {
-    const d = loadDraft(aiContext.user_id);
+    const d = loadDraft(draftUser);
     if (d && (d.quote.items?.length || d.quote.title)) setPendingDraft(d);
+    if (isGuest && guestUsedBefore()) setAiUsed(true);
     setIsMobile(window.innerWidth < 768);
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
@@ -178,8 +196,8 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   // Persist on every change
   useEffect(() => {
-    if (quote.items?.length || quote.title) saveDraft(aiContext.user_id, messages, quote);
-  }, [messages, quote, aiContext.user_id]);
+    if (quote.items?.length || quote.title) saveDraft(draftUser, messages, quote);
+  }, [messages, quote, draftUser]);
 
   useEffect(() => {
     if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
@@ -192,6 +210,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const send = useCallback(async (text: string, display?: string, via: "text" | "voice" | "file" = "text") => {
     const userText = text.trim();
     if (!userText || isLoading) return;
+    if (isGuest && aiUsed) { setSignupOpen(true); return; }
     if (!messages.some((m) => m.role === "user")) ev("started", { via });
     const history = [...messages.filter((m) => !m.loading && !m.error), { role: "user" as const, content: userText, display }];
     setMessages([...history, { role: "assistant", content: "", loading: true }]);
@@ -203,6 +222,13 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         body: JSON.stringify({ token, currentQuote: quote, messages: history.map(({ role, content }) => ({ role, content })) }),
       });
       const data = (await res.json().catch(() => ({}))) as { text?: string; quote?: QuoteUpdateV2 | null; error?: string };
+      // The server counted the guest's one try as soon as it answered (also on an AI error).
+      if (isGuest && res.status !== 400 && res.status !== 401) spendGuestTry();
+      if (isGuest && data.error === "guest_limit") {
+        ev("guest_cta", { where: "limit" });
+        setMessages([...history, { role: "assistant", content: GUEST_LIMIT_TEXT }]);
+        return;
+      }
       if (!res.ok || !data.text) throw new Error(data.error ?? `HTTP ${res.status}`);
 
       if (data.quote) {
@@ -233,7 +259,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, messages, quote, token]);
+  }, [isLoading, messages, quote, token, isGuest, aiUsed, spendGuestTry]);
 
   const handleSend = useCallback(() => {
     const t = input;
@@ -246,11 +272,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   // ── Voice: record (MediaRecorder) → /api/v2/transcribe → send as a message ──
   // Same approach as the Bubble voice_test page, which worked on desktop, mobile and the app.
-  const MAX_REC_SEC = 180;
+  const MAX_REC_SEC = isGuest ? GUEST_REC_SEC : 180;
   const SILENCE_RMS = 0.015; // room noise is ~0.002–0.008; normal speech peaks well above 0.05
   const handleVoice = useCallback(async () => {
     if (voice === "transcribing" || isLoading) return;
     if (voice === "recording") { recorderRef.current?.stop(); return; }
+    if (isGuest && aiUsed) { setSignupOpen(true); return; }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       addError("ההקלטה לא נתמכת בדפדפן הזה — אפשר להקליד");
       return;
@@ -315,6 +342,13 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
         fd.append("audio", blob, `recording.${ext}`);
         const res = await fetch("/api/v2/transcribe", { method: "POST", headers: { ...sid, Authorization: `Bearer ${token}` }, body: fd });
         const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+        if (isGuest && data.error === "guest_limit") {
+          setVoice("idle");
+          spendGuestTry();
+          ev("guest_cta", { where: "voice_limit" });
+          setMessages((prev) => [...prev, { role: "assistant", content: GUEST_LIMIT_TEXT }]);
+          return;
+        }
         if (!res.ok || !data.text) throw new Error(data.error ?? `HTTP ${res.status}`);
         setVoice("idle");
         ev("voice_sent", { sec: recSecRef.current });
@@ -322,7 +356,10 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       } catch (e) {
         setVoice("idle");
         ev("voice_failed", { error: e instanceof Error ? e.message : "" });
-        addError(e instanceof Error && e.message === "no_speech" ? "לא שמעתי דיבור בהקלטה — נסה שוב" : "התמלול נכשל — נסה שוב או הקלד");
+        const code = e instanceof Error ? e.message : "";
+        addError(code === "no_speech" ? "לא שמעתי דיבור בהקלטה — נסה שוב"
+          : code === "too_long" ? `ההקלטה ארוכה מדי — עד ${MAX_REC_SEC} שניות`
+          : "התמלול נכשל — נסה שוב או הקלד");
       }
     };
     recorderRef.current = rec;
@@ -342,7 +379,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       sampleLevel();
       if (s >= MAX_REC_SEC && rec.state === "recording") rec.stop();
     }, 250);
-  }, [voice, isLoading, token, send, addError]);
+  }, [voice, isLoading, token, send, addError, isGuest, aiUsed, MAX_REC_SEC, spendGuestTry]);
 
   const cancelVoice = useCallback(() => {
     if (recorderRef.current?.state !== "recording") return;
@@ -458,9 +495,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 
   const discardDraft = useCallback(() => {
     ev("draft_discarded");
-    clearDraft(aiContext.user_id);
+    clearDraft(draftUser);
     setPendingDraft(null);
-  }, [aiContext.user_id]);
+  }, [draftUser]);
 
   // Two taps instead of confirm(): the BDK app's WebView blocks JS dialogs, so confirm() always returned false.
   const startOver = useCallback(() => {
@@ -473,7 +510,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     setConfirmNew(false);
     ev("new_quote", { items: quote.items?.length ?? 0 });
-    clearDraft(aiContext.user_id);
+    clearDraft(draftUser);
     setQuote({});
     setMessages([{ role: "assistant", content: greeting }]);
     setRestored(false);
@@ -482,10 +519,64 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     setInput("");
     setSuggestions([]);
     setUndo(null);
-  }, [confirmNew, aiContext.user_id, greeting, quote.items?.length]);
+  }, [confirmNew, draftUser, greeting, quote.items?.length]);
+
+  // ── Guest: save = free signup (same check-email → onboard-quote → redirect as the old /chat) ──
+  const openSignup = useCallback((where: string) => { ev("guest_signup_opened", { where }); setSignupOpen(true); }, []);
+  const guestSignup = useCallback(async (info: GuestInfo): Promise<string | null> => {
+    try {
+      const check = await fetch("/api/check-email", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: info.email }),
+      });
+      if (((await check.json().catch(() => ({}))) as { exists?: boolean }).exists) {
+        ev("guest_email_exists");
+        setTimeout(() => openQuote(APP_URL), 3200);
+        return "המייל הזה כבר רשום בתיקתוק — מעבירים אותך להתחברות...";
+      }
+    } catch { /* never block the signup on the check */ }
+    const t = computeTotals({ ...quote, pricing_mode: "total" });
+    try {
+      const res = await fetch("/api/onboard-quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_name: info.company_name,
+          email: info.email,
+          industry: quote.industry ?? "",
+          address: info.address,
+          company_phone: info.phone,
+          utm_source: guest?.utmSource,
+          utm_medium: guest?.utmMedium,
+          // Same shape the old guest chat sent: total before VAT (after the discount), VAT apart.
+          quote: {
+            title: quote.title,
+            client: quote.client,
+            items: (quote.items ?? []).map((it) => ({ name: it.name, description: it.description ?? "" })),
+            total: t.beforeVat,
+            has_tax: quote.has_tax ?? false,
+            tax_amount: t.vat,
+            warranty: quote.warranty,
+            terms: quote.terms,
+            comments: quote.comments,
+          },
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; redirect_url?: string };
+      if (!res.ok || !data.ok) throw new Error();
+      ev("guest_saved");
+      tracking.saved = true;
+      clearDraft(draftUser);
+      openQuote(data.redirect_url || process.env.NEXT_PUBLIC_GUEST_REDIRECT_URL || APP_URL);
+      return null;
+    } catch {
+      ev("guest_save_failed");
+      throw new Error("save_failed");
+    }
+  }, [quote, guest, draftUser]);
 
   // ── Save to Bubble ──────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
+    if (isGuest) { openSignup("save"); return; }
     if (saveState === "saving" || saveState === "saved") return;
     setSaveState("saving");
     setSaveError("");
@@ -500,7 +591,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       if (!res.ok || !data.ok) throw new Error(data.message ?? `HTTP ${res.status}`);
       setSaveState("saved");
       tracking.saved = true;
-      clearDraft(aiContext.user_id);
+      clearDraft(draftUser);
       if (bubbleEnv === "test" || reviewDue(aiContext.user_id)) {
         markReviewShown(aiContext.user_id);
         setSaved({ quote_id: data.quote_id, url: data.redirect_url }); // ⭐ review card, then on to the quote in Bubble
@@ -512,7 +603,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       setSaveError(e instanceof Error ? e.message : String(e));
       ev("save_failed", { error: e instanceof Error ? e.message.slice(0, 40) : "" });
     }
-  }, [saveState, token, quote, bubbleEnv, aiContext.user_id]);
+  }, [saveState, token, quote, bubbleEnv, aiContext.user_id, draftUser, isGuest, openSignup]);
 
   // After saving: 1-5 stars + a short comment (same /api/review as the old chat), then open the quote in Bubble.
   const [saved, setSaved] = useState<{ quote_id?: string; url?: string } | null>(null);
@@ -530,7 +621,25 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const review = saved ? <ReviewCard onDone={finishReview} /> : null;
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  const composer = (
+  const signup = signupOpen ? (
+    <GuestSignupForm onClose={() => setSignupOpen(false)} onSubmit={guestSignup} />
+  ) : null;
+
+  // Guest CTA: a finished quote → the signup form (it goes to the new account);
+  // an unfinished one → show what's missing first (the signup webhook never got a half quote from the old chat either).
+  const guestMissing = [
+    !quote.items?.length && "פריטים", !quote.title?.trim() && "כותרת", !quote.client?.name?.trim() && "שם לקוח",
+    !(computeTotals({ ...quote, pricing_mode: "total" }).subtotal > 0) && "מחיר",
+  ].filter(Boolean).join(", ");
+  const onGuestCta = () => {
+    if (!hasQuote) { ev("guest_cta", { where: "no_quote" }); openQuote(APP_URL); return; }
+    if (!guestMissing) { openSignup("cta"); return; }
+    setChatOpen(false);
+    addError(`כדי לשמור ולהירשם — השלימו בהצעה: ${guestMissing}. אחר כך "שמירה והרשמה חינם".`);
+  };
+  const composer = isGuest && aiUsed ? (
+    <GuestCta onSignup={onGuestCta} />
+  ) : (
     <Composer
       input={input}
       setInput={setInput}
@@ -542,7 +651,8 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       voice={voice}
       recSeconds={recSeconds}
       busy={isLoading || fileBusy}
-      placeholder={hasQuote ? "מה לשנות?" : "כתוב, דבר או צרף מסמך"}
+      placeholder={isGuest ? `כתוב או דבר (עד ${GUEST_REC_SEC} שניות)` : hasQuote ? "מה לשנות?" : "כתוב, דבר או צרף מסמך"}
+      noFile={isGuest}
     />
   );
 
@@ -556,12 +666,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   const header = (
     <div dir="rtl" style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid #e8eaed", display: "flex", alignItems: "center", gap: 10, color: "#1a1a2e" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{aiContext.company_name}</div>
+        <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{isGuest ? "תיקתוק הצעות מחיר" : aiContext.company_name}</div>
         <div style={{ fontSize: 12, color: "#6d28d9", marginTop: 2 }}>
-          הצעת מחיר עם AI{bubbleEnv === "test" && <span style={{ color: "#dc2626" }}> · מצב בדיקה</span>}
+          {isGuest ? "תוך 30 שניות יש לכם הצעת מחיר" : "הצעת מחיר עם AI"}{bubbleEnv === "test" && <span style={{ color: "#dc2626" }}> · מצב בדיקה</span>}
         </div>
       </div>
-      {started && (
+      {started && !isGuest && (
         <button onClick={startOver} style={{
           ...chipStyle, fontSize: 12, padding: "6px 12px",
           ...(confirmNew ? { background: "#dc2626", color: "#fff", border: "1px solid #dc2626" } : {}),
@@ -602,6 +712,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
       onAddPhotos={addPhotos}
       onRemovePhoto={removePhoto}
       photoBusy={photoBusy}
+      guest={isGuest}
     />
   );
 
@@ -625,7 +736,9 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
           draft={pendingDraft}
           onResume={resumeDraft}
           onDiscard={discardDraft}
+          guest={isGuest ? { aiUsed, onSignup: () => openQuote(APP_URL), onManual: () => { ev("guest_cta", { where: "manual" }); setQuote({ pricing_mode: "total", title: "הצעת מחיר" }); } } : undefined}
         />
+        {signup}
       </div>
     );
   }
@@ -637,6 +750,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
         {review}
+        {signup}
         {header}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
           {showChat ? (
@@ -682,6 +796,7 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#fff", overflow: "hidden" }}>
       {review}
+      {signup}
       <div style={{ flex: 1, display: "flex", minHeight: 0, direction: "ltr" }}>
         {hasQuote && (
           <div style={{ width: "46%", minWidth: 340, borderRight: "1px solid #e5e7eb", display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -699,10 +814,12 @@ export default function ChatPageV2({ aiContext, token, bubbleEnv }: Props) {
 }
 
 // ── Start screen ──────────────────────────────────────────────────────────────
-function StartScreen({ input, setInput, onSend, onVoice, onCancelVoice, getLevel, onFile, voice, recSeconds, busy, error, draft, onResume, onDiscard }: {
+function StartScreen({ input, setInput, onSend, onVoice, onCancelVoice, getLevel, onFile, voice, recSeconds, busy, error, draft, onResume, onDiscard, guest }: {
   input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onCancelVoice: () => void; getLevel: () => number; onFile: (f: File) => void;
   voice: Voice; recSeconds: number; busy: boolean; error?: string;
   draft: Draft | null; onResume: () => void; onDiscard: () => void;
+  /** Marketing-site visitor: no files; after the one AI try → signup or a quote by hand. */
+  guest?: { aiUsed: boolean; onSignup: () => void; onManual: () => void };
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const recording = voice === "recording";
@@ -724,8 +841,19 @@ function StartScreen({ input, setInput, onSend, onVoice, onCancelVoice, getLevel
         )}
         <div>
           <div style={{ fontSize: 22, fontWeight: 800 }}>הצעת מחיר חדשה</div>
-          <div style={{ fontSize: 14, color: "#6b7280", marginTop: 4, lineHeight: 1.6 }}>כתוב למי ההצעה, מה כלול וכמה זה עולה — ואנחנו ניצור לך את ההצעה.</div>
+          <div style={{ fontSize: 14, color: "#6b7280", marginTop: 4, lineHeight: 1.6 }}>
+            {guest ? "כתבו או ספרו בקול למי ההצעה, מה כלול וכמה זה עולה — וה-AI יכין לכם הצעת מחיר. ניסיון אחד חינם, בלי הרשמה." : "כתוב למי ההצעה, מה כלול וכמה זה עולה — ואנחנו ניצור לך את ההצעה."}
+          </div>
         </div>
+
+        {guest?.aiUsed ? (
+          <div style={{ border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 16, padding: "16px 16px 14px", textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>השתמשת בניסיון החינמי של ה-AI</div>
+            <div style={{ fontSize: 14, color: "#4b5563", marginTop: 6, lineHeight: 1.6 }}>הירשמו בחינם — ותוכלו לעבוד עם AI ללא הגבלה ולהקליט הודעות ארוכות.</div>
+            <button onClick={guest.onSignup} style={{ ...ctaBtn, marginTop: 12 }}>להרשמה חינם ←</button>
+            <button onClick={guest.onManual} style={{ ...chipStyle, display: "block", margin: "10px auto 0", fontSize: 13, color: "#4b5563" }}>או ליצור הצעה ידנית</button>
+          </div>
+        ) : (<>
 
         <div style={{ border: "1px solid #ddd6fe", borderRadius: 18, padding: 12, background: "#fff", boxShadow: "0 1px 8px rgba(124,58,237,0.08)" }}>
           <textarea
@@ -759,13 +887,14 @@ function StartScreen({ input, setInput, onSend, onVoice, onCancelVoice, getLevel
           </div>
           {recording && <VoiceBars getLevel={getLevel} width={180} />}
           <div style={{ fontSize: 14, color: recording ? "#dc2626" : "#4b5563", fontWeight: recording ? 700 : 400 }}>
-            {recording ? `מקליט ${mmss(recSeconds)} — לחץ לסיום` : voice === "transcribing" ? "מתמלל..." : "לחץ ודבר — ספר על העבודה"}
+            {recording ? `מקליט ${mmss(recSeconds)} — לחץ לסיום` : voice === "transcribing" ? "מתמלל..." : guest ? `לחץ ודבר — עד ${GUEST_REC_SEC} שניות` : "לחץ ודבר — ספר על העבודה"}
           </div>
           {recording && (
             <button onClick={onCancelVoice} style={{ ...chipStyle, fontSize: 13, color: "#6b7280", background: "#fff" }}>🗑 ביטול הקלטה</button>
           )}
         </div>
 
+        {!guest && (<>
         <button onClick={() => fileRef.current?.click()} disabled={working || recording} style={{
           display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "14px 16px", borderRadius: 14,
           border: "1.5px dashed #c4b5fd", background: "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "right", color: "#1a1a2e",
@@ -777,6 +906,8 @@ function StartScreen({ input, setInput, onSend, onVoice, onCancelVoice, getLevel
           </span>
         </button>
         <input ref={fileRef} type="file" accept="application/pdf,image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
+        </>)}
+        </>)}
 
         {error && <div style={{ fontSize: 13, color: "#b91c1c", background: "#fef2f2", borderRadius: 10, padding: "8px 12px" }}>{error}</div>}
       </div>
@@ -785,9 +916,9 @@ function StartScreen({ input, setInput, onSend, onVoice, onCancelVoice, getLevel
 }
 
 // ── Composer (chat input with mic + attach) ───────────────────────────────────
-function Composer({ input, setInput, onSend, onVoice, onCancelVoice, getLevel, onFile, voice, recSeconds, busy, placeholder }: {
+function Composer({ input, setInput, onSend, onVoice, onCancelVoice, getLevel, onFile, voice, recSeconds, busy, placeholder, noFile }: {
   input: string; setInput: (v: string) => void; onSend: () => void; onVoice: () => void; onCancelVoice: () => void; getLevel: () => number; onFile: (f: File) => void;
-  voice: Voice; recSeconds: number; busy: boolean; placeholder: string;
+  voice: Voice; recSeconds: number; busy: boolean; placeholder: string; noFile?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -798,7 +929,7 @@ function Composer({ input, setInput, onSend, onVoice, onCancelVoice, getLevel, o
     <div style={{ display: "flex", alignItems: "flex-end", gap: 6, border: "1px solid #e2e6ea", borderRadius: 26, padding: "6px 8px", background: "#fff", boxShadow: "0 1px 8px rgba(0,0,0,0.06)" }}>
       {recording ? (
         <button onClick={onCancelVoice} aria-label="ביטול הקלטה" style={{ ...roundBtn, border: "none", background: "transparent" }}>🗑</button>
-      ) : (
+      ) : noFile ? null : (
         <button onClick={() => fileRef.current?.click()} disabled={busy || voice !== "idle"} aria-label="צירוף מסמך או תמונה" style={{ ...roundBtn, border: "none", background: "transparent", color: "#6b7280" }}>📎</button>
       )}
       <input ref={fileRef} type="file" accept="application/pdf,image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
@@ -968,7 +1099,7 @@ function Bubble({ m }: { m: ChatMessage }) {
 // ── Quote panel ───────────────────────────────────────────────────────────────
 function QuotePanelV2({
   quote, companyName, companyLogo, onEdit, onEditClient, onSetItems, onSwitchMode, onSave, saveState, saveError, isTest, flash,
-  suggestions, onAddSuggestion, aiSuggest, onAddPhotos, onRemovePhoto, photoBusy,
+  suggestions, onAddSuggestion, aiSuggest, onAddPhotos, onRemovePhoto, photoBusy, guest,
 }: {
   quote: Q;
   companyName: string;
@@ -988,6 +1119,8 @@ function QuotePanelV2({
   onAddPhotos: (files: File[]) => void;
   onRemovePhoto: (url: string) => void;
   photoBusy: string;
+  /** Guest: one price only, no photos, no ✨ buttons (they need an account); saving = free signup. */
+  guest?: boolean;
 }) {
   const perItem = quote.pricing_mode === "per_item";
   const items = quote.items ?? [];
@@ -1078,8 +1211,8 @@ function QuotePanelV2({
           </div>
         </Box>
 
-        {/* Mode switch */}
-        <div role="radiogroup" aria-label="סוג תמחור" style={{ display: "flex", background: "#f3f4f6", borderRadius: 10, padding: 3, margin: "14px 0 10px" }}>
+        {/* Mode switch (guests: one price only) */}
+        {!guest && <div role="radiogroup" aria-label="סוג תמחור" style={{ display: "flex", background: "#f3f4f6", borderRadius: 10, padding: 3, margin: "14px 0 10px" }}>
           {(["total", "per_item"] as const).map((m) => (
             <button
               key={m}
@@ -1094,7 +1227,7 @@ function QuotePanelV2({
               }}
             >{m === "total" ? "סכום אחד" : "מחיר לכל פריט"}</button>
           ))}
-        </div>
+        </div>}
 
         {/* Items */}
         <div ref={listRef} style={{ marginBottom: 8 }}>
@@ -1119,7 +1252,7 @@ function QuotePanelV2({
                     setEditingIdx(null);
                   }}
                   onDelete={() => { onSetItems((list) => list.filter((_, j) => j !== i)); setEditingIdx(null); ev("item_deleted"); }}
-                  onReword={() => aiSuggest("item", i) as Promise<Suggestion[]>}
+                  onReword={guest ? undefined : () => aiSuggest("item", i) as Promise<Suggestion[]>}
                 />
               ) : (
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -1167,7 +1300,7 @@ function QuotePanelV2({
           )}
         </div>
 
-        <PhotosBox images={quote.images ?? []} onAdd={onAddPhotos} onRemove={onRemovePhoto} busy={photoBusy} />
+        {!guest && <PhotosBox images={quote.images ?? []} onAdd={onAddPhotos} onRemove={onRemovePhoto} busy={photoBusy} />}
 
         {/* Totals */}
         <div style={{ margin: "14px 0", padding: "12px 14px", background: "#f5f3ff", borderRadius: 10, border: "1px solid #ddd6fe", fontSize: 13 }}>
@@ -1218,11 +1351,11 @@ function QuotePanelV2({
             <>
               <Box title="תנאים ואחריות">
                 <Editable multiline value={termsText} placeholder="הוספת תנאים ✏️" onChange={(v) => onEdit({ terms: v, warranty: "" })} style={{ fontSize: 12, color: "#4b5563" }} />
-                <AiLines load={() => aiSuggest("terms") as Promise<{ text: string }[]>} onAdd={(lines) => onEdit({ terms: append(termsText, lines), warranty: "" })} />
+                {!guest && <AiLines load={() => aiSuggest("terms") as Promise<{ text: string }[]>} onAdd={(lines) => onEdit({ terms: append(termsText, lines), warranty: "" })} />}
               </Box>
               <Box title="הערות">
                 <Editable multiline value={quote.comments ?? ""} placeholder="הוספת הערות ✏️" onChange={(v) => onEdit({ comments: v })} style={{ fontSize: 12, color: "#4b5563" }} />
-                <AiLines load={() => aiSuggest("notes") as Promise<{ text: string }[]>} onAdd={(lines) => onEdit({ comments: append(quote.comments ?? "", lines) })} />
+                {!guest && <AiLines load={() => aiSuggest("notes") as Promise<{ text: string }[]>} onAdd={(lines) => onEdit({ comments: append(quote.comments ?? "", lines) })} />}
               </Box>
             </>
           );
@@ -1241,13 +1374,14 @@ function QuotePanelV2({
             opacity: canSave ? 1 : 0.45, cursor: canSave ? "pointer" : "default",
           }}
         >
-          {saveState === "saving" ? "שומר..." : saveState === "saved" ? "✓ נשמר — מעבירים אותך" : saveState === "error" ? "השמירה נכשלה — נסה שוב" : "שמירה ומעבר להצעה"}
+          {guest ? "שמירה והרשמה חינם" : saveState === "saving" ? "שומר..." : saveState === "saved" ? "✓ נשמר — מעבירים אותך" : saveState === "error" ? "השמירה נכשלה — נסה שוב" : "שמירה ומעבר להצעה"}
         </button>
         <div style={{ fontSize: 11, color: "#6b7280", marginTop: 6 }}>
           {saveState === "error"
             ? `ההצעה לא נשמרה (${saveError}). הטיוטה שמורה כאן — אפשר לנסות שוב.`
             : canSave
-              ? `נשמר כטיוטה${isTest ? " ב-version-test" : ""}, ואז תראה את ה-PDF עם העיצוב שלך`
+              ? guest ? "ההרשמה חינמית — ההצעה תחכה לך בחשבון, עם PDF מעוצב"
+              : `נשמר כטיוטה${isTest ? " ב-version-test" : ""}, ואז תראה את ה-PDF עם העיצוב שלך`
               : `חסר: ${missing.join(", ")}`}
         </div>
       </div>
@@ -1262,7 +1396,7 @@ const numbersOnly = (s: string) => s.replace(/[^\d.,]/g, "").replace(/(\..*)\./g
 function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
   item: QuoteItemV2; perItem: boolean;
   onDone: (patch: Partial<QuoteItemV2>) => void; onCancel: () => void;
-  onDelete: () => void; onReword: () => Promise<Suggestion[]>;
+  onDelete: () => void; onReword?: () => Promise<Suggestion[]>;
 }) {
   const [d, setD] = useState({
     name: item.name, description: item.description,
@@ -1271,6 +1405,7 @@ function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
   const [ai, setAi] = useState<{ state: "idle" | "loading" | "error" } | { state: "ready"; options: Suggestion[] }>({ state: "idle" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const reword = async () => {
+    if (!onReword) return;
     setAi({ state: "loading" });
     try {
       const options = (await onReword()).filter((o) => o?.name);
@@ -1306,7 +1441,7 @@ function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
           ))}
           <button onClick={() => setAi({ state: "idle" })} style={{ ...chipStyle, alignSelf: "flex-start", fontSize: 12, padding: "4px 12px" }}>השאר כמו שהיה</button>
         </div>
-      ) : (
+      ) : !onReword ? null : (
         <button onClick={reword} disabled={ai.state === "loading"} style={{ ...chipStyle, alignSelf: "flex-start", fontSize: 12, padding: "5px 12px", background: "#faf5ff", border: "1px dashed #c4b5fd" }}>
           {ai.state === "loading" ? <>מנסח <Dots /></> : ai.state === "error" ? "✨ לא הצלחתי — נסה שוב" : "✨ שפר ניסוח"}
         </button>
@@ -1499,3 +1634,78 @@ const chipStyle: React.CSSProperties = {
   padding: "7px 16px", borderRadius: 20, border: "1px solid #e0e0e0", background: "#fff",
   color: "#6d28d9", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
 };
+
+// ── Guests (marketing site) ───────────────────────────────────────────────────
+const ctaBtn: React.CSSProperties = {
+  padding: "12px 26px", borderRadius: 50, border: "none", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+  color: "#fff", background: `linear-gradient(135deg, ${PURPLE}, ${PURPLE_2})`, boxShadow: "0 4px 14px rgba(124,58,237,0.3)",
+};
+
+/** In place of the chat input once the guest's one AI try was used. */
+function GuestCta({ onSignup }: { onSignup: () => void }) {
+  return (
+    <div style={{ border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 18, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, color: "#1a1a2e" }}>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.5 }}>
+        <b>הירשמו כדי לעבוד עם AI ללא הגבלה</b>
+        <div style={{ color: "#6b7280", fontSize: 12 }}>ההרשמה חינם · כולל הקלטות ארוכות</div>
+      </div>
+      <button onClick={onSignup} style={{ ...ctaBtn, padding: "9px 16px", fontSize: 14, flexShrink: 0 }}>להרשמה חינם</button>
+    </div>
+  );
+}
+
+export interface GuestInfo { company_name: string; email: string; phone: string; address: string }
+
+/** Free signup when a guest saves: the business details + terms, then the quote goes to the new account. */
+function GuestSignupForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: (info: GuestInfo) => Promise<string | null> }) {
+  const [d, setD] = useState<GuestInfo>({ company_name: "", email: "", phone: "", address: "" });
+  const [terms, setTerms] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email.trim());
+  const ready = !!d.company_name.trim() && emailOk && terms && !busy;
+  const submit = async () => {
+    if (!ready) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const msg = await onSubmit({ company_name: d.company_name.trim(), email: d.email.trim(), phone: d.phone.trim(), address: d.address.trim() });
+      setNote(msg ? { text: msg, error: false } : { text: "נרשמת! מעבירים אותך להצעה...", error: false });
+    } catch {
+      setNote({ text: "ההרשמה לא הצליחה — נסו שוב בעוד רגע.", error: true });
+      setBusy(false);
+    }
+  };
+  const field = (k: keyof GuestInfo, label: string, extra?: React.InputHTMLAttributes<HTMLInputElement>) => (
+    <label style={{ display: "block", textAlign: "right" }}>
+      <span style={{ fontSize: 12, color: "#4b5563" }}>{label}</span>
+      <input value={d[k]} onChange={(e) => setD({ ...d, [k]: e.target.value })} disabled={busy}
+        style={{ ...inputStyle, fontSize: 16, padding: "9px 10px", marginTop: 3 }} {...extra} />
+    </label>
+  );
+  return (
+    <div dir="rtl" style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(17,24,39,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+      <div style={{ width: "100%", maxWidth: 400, maxHeight: "100%", overflowY: "auto", background: "#fff", borderRadius: 18, padding: "18px 16px", color: "#1a1a2e", boxSizing: "border-box" }}>
+        <div style={{ fontSize: 17, fontWeight: 800 }}>הרשמה חינם ושמירת ההצעה</div>
+        <div style={{ fontSize: 13, color: "#6b7280", marginTop: 4, lineHeight: 1.5 }}>הפרטים של העסק שלך יופיעו על ההצעה. אחרי ההרשמה — AI ללא הגבלה.</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
+          {field("company_name", "שם העסק *", { autoFocus: true, autoComplete: "organization" })}
+          {field("email", "מייל *", { type: "email", inputMode: "email", autoComplete: "email", style: { ...inputStyle, fontSize: 16, padding: "9px 10px", marginTop: 3, direction: "ltr", textAlign: "right" } })}
+          {field("phone", "טלפון", { type: "tel", inputMode: "tel", autoComplete: "tel", style: { ...inputStyle, fontSize: 16, padding: "9px 10px", marginTop: 3, direction: "ltr", textAlign: "right" } })}
+          {field("address", "כתובת העסק", { autoComplete: "street-address" })}
+          <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, color: "#374151", cursor: "pointer" }}>
+            <input type="checkbox" checked={terms} onChange={(e) => setTerms(e.target.checked)} disabled={busy} style={{ accentColor: PURPLE, marginTop: 3 }} />
+            <span>קראתי ואני מסכים/ה ל<a href="https://tik-tok.co.il/terms-privacy" target="_blank" rel="noopener noreferrer" style={{ color: PURPLE }}>תנאי השימוש ומדיניות הפרטיות</a></span>
+          </label>
+        </div>
+        {note && <div style={{ marginTop: 12, fontSize: 13, borderRadius: 10, padding: "8px 12px", background: note.error ? "#fef2f2" : "#f0fdf4", color: note.error ? "#b91c1c" : "#166534" }}>{note.text}</div>}
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button onClick={submit} disabled={!ready} style={{ ...ctaBtn, flex: 1, opacity: ready ? 1 : 0.45, cursor: ready ? "pointer" : "default" }}>
+            {busy ? "נרשמים..." : "הרשמה ושמירה"}
+          </button>
+          <button onClick={onClose} disabled={busy} style={{ ...chipStyle, padding: "11px 14px" }}>ביטול</button>
+        </div>
+      </div>
+    </div>
+  );
+}
