@@ -162,7 +162,7 @@ async function handle(contactId: string, incoming: Msg | null) {
   };
   // With the router on, ManyChat sends us every message, not only after "התחלה".
   // Then "no account" and "upgrade" answer only quote actions, not every support question.
-  const mode = routerMode();
+  const mode = routerMode(contactId);
   const quoteOnly = mode === "off";
   const shadow = async (result: string, user: WaUser | null) => {
     const r = await shadowRoute(msg, user);

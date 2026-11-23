@@ -9,15 +9,21 @@ import { costUsd } from "@/lib/v2/track";
  *   off    (default) — exactly the old behavior.
  *   shadow — messages outside a quote are classified and logged to v2_events (event wa_message,
  *            props route/confidence), but nobody gets an answer: they stay in Live Chat as today.
- *   on     — acting on the route (next step, after we review the shadow logs together).
+ *   on     — acting on the route: expenses to Bubble, quote from a free message, buttons when unsure.
+ *
+ * WA_ROUTER_ON_CONTACTS — comma-separated ManyChat contact ids that get "on" while everyone else
+ *   is in shadow (testing on Amit's own number). Ignored when the mode is off.
  */
 
 export type RouterMode = "off" | "shadow" | "on";
 export type Route = "quote" | "expense" | "task" | "support" | "unsure";
 
-export function routerMode(): RouterMode {
+export function routerMode(contactId?: string): RouterMode {
   const m = (process.env.WA_ROUTER_MODE ?? "").trim().toLowerCase();
-  return m === "shadow" || m === "on" ? m : "off";
+  const mode: RouterMode = m === "shadow" || m === "on" ? m : "off";
+  if (mode !== "shadow" || !contactId) return mode;
+  const testers = (process.env.WA_ROUTER_ON_CONTACTS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return testers.includes(contactId) ? "on" : "shadow";
 }
 
 const MODEL = "gpt-4o-mini";
