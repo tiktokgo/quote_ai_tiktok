@@ -18,6 +18,7 @@ export interface TrackEvent {
 /** USD per 1M tokens (OpenAI list prices, Oct 2026 — an estimate for the dashboard, not billing). */
 const PRICES: Record<string, { in: number; out: number; audioIn?: number }> = {
   "gpt-4o": { in: 2.5, out: 10 },
+  "gpt-4o-mini": { in: 0.15, out: 0.6 },
   "gpt-4o-transcribe": { in: 2.5, out: 10, audioIn: 6 },
 };
 

@@ -8,7 +8,9 @@ import { lookupUser, saveQuote } from "@/lib/wa/bubble";
 import { reply, endConversation, hasSavedFlow, lastInput } from "@/lib/wa/manychat";
 import { loadSession, saveSession, deleteSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
-import { isVoiceUrl, downloadVoice } from "@/lib/wa/audio";
+import { isVoiceUrl, downloadVoice, fileKind } from "@/lib/wa/audio";
+import { routerMode, classify } from "@/lib/wa/router";
+import type { WaUser } from "@/lib/wa/bubble";
 
 // Transcription + up to 3 gpt-4o calls, after the response was sent.
 export const maxDuration = 60;
@@ -36,6 +38,7 @@ const T = {
   cancelled: "ההצעה בוטלה. כדי להתחיל חדשה כתבו \"התחלה\".",
   expired: "ההצעה הזו כבר לא פתוחה. כדי להתחיל חדשה כתבו \"התחלה\".",
   error: "משהו השתבש אצלנו 😕 נסו שוב בעוד רגע.",
+  fileInQuote: "📎 קיבלתי קובץ, אבל באמצע הצעת מחיר אפשר רק לכתוב או להקליט.\nכדי לשמור את הקובץ כהוצאה, כתבו \"הוצאה\" ושלחו אותו שוב.",
 };
 
 // Typed words that act like the buttons.
@@ -68,21 +71,55 @@ export async function POST(req: NextRequest) {
   const action = str(body.action);
   if (action && !["start", "save", "cancel", "message"].includes(action)) return Response.json({ ok: false, error: "bad_action" }, { status: 400 });
   const msg = action === "message" ? null : toMessage(str(body.text), str(body.audio_url), action);
-  if (msg && !msg.action && !msg.text && !msg.audioUrl) return Response.json({ ok: false, error: "empty" }, { status: 400 });
+  if (msg && !msg.action && !msg.text && !msg.audioUrl && !msg.fileUrl) return Response.json({ ok: false, error: "empty" }, { status: 400 });
 
   after(() => handle(contactId, msg));
   return Response.json({ ok: true });
 }
 
-type Msg = { text: string; audioUrl: string; action: string };
+/** fileUrl = an image or PDF the user sent (a possible expense) — never sent to transcription. */
+type Msg = { text: string; audioUrl: string; fileUrl: string; action: string };
 
 function toMessage(text: string, audioUrl: string, action: string): Msg {
   text = text.slice(0, 4000);
-  // ManyChat hands us a voice note as the "text" of the message.
-  if (!audioUrl && isVoiceUrl(text)) { audioUrl = text; text = ""; }
+  let fileUrl = "";
+  // ManyChat hands us a voice note, an image or a PDF as the "text" of the message.
+  if (!audioUrl && isVoiceUrl(text)) {
+    const kind = fileKind(text);
+    if (kind === "image" || kind === "pdf") fileUrl = text;
+    else audioUrl = text;
+    text = "";
+  }
   if (!action && SAVE_WORDS.test(text)) action = "save";
   if (!action && CANCEL_WORDS.test(text)) action = "cancel";
-  return { text, audioUrl, action };
+  return { text, audioUrl, fileUrl, action };
+}
+
+/**
+ * WA_ROUTER_MODE=shadow: where a message outside a quote would go. Logged only — no answer,
+ * no Bubble call. Never throws: a router failure must not reach the user.
+ */
+async function shadowRoute(msg: Msg, user: WaUser | null): Promise<{ props: Record<string, string | number | null>; cost: number }> {
+  if (msg.fileUrl) return { props: { route: "expense", why: "file", file: fileKind(msg.fileUrl) }, cost: 0 };
+  if (!user) return { props: { route: "non_user" }, cost: 0 };
+  if (!msg.text && !msg.audioUrl) return { props: { route: null }, cost: 0 };
+  let cost = 0;
+  try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    let said = msg.text;
+    if (msg.audioUrl) {
+      const t = await transcribeWithUsage(openai, await downloadVoice(msg.audioUrl), user.industry || undefined);
+      cost += costUsd("gpt-4o-transcribe", t.usage) ?? 0;
+      said = [said, t.text].filter(Boolean).join("\n");
+    }
+    if (!said) return { props: { route: null, why: "no_speech" }, cost };
+    const c = await classify(openai, said);
+    cost += c.cost;
+    return { props: { route: c.route, confidence: Math.round(c.confidence * 100) / 100 }, cost };
+  } catch (err) {
+    console.error("[wa/router] shadow failed:", err instanceof Error ? err.message : err);
+    return { props: { route: null, why: "error" }, cost };
+  }
 }
 
 /**
@@ -92,18 +129,31 @@ function toMessage(text: string, audioUrl: string, action: string): Msg {
 async function handle(contactId: string, incoming: Msg | null) {
   let userId: string | undefined;
   let cost = 0;
-  let msg: Msg = incoming ?? { text: "", audioUrl: "", action: "" };
+  let msg: Msg = incoming ?? { text: "", audioUrl: "", fileUrl: "", action: "" };
   const report = (props: Record<string, string | number | boolean | null>) =>
-    track({ event: "wa_message", user_id: userId, session_id: `wa:${contactId}`, cost_usd: cost || undefined, props: { ...props, voice: !!msg.audioUrl, action: msg.action || null } });
+    track({ event: "wa_message", user_id: userId, session_id: `wa:${contactId}`, cost_usd: cost || undefined, props: { ...props, voice: !!msg.audioUrl, file: !!msg.fileUrl, action: msg.action || null } });
+  // With the router on, ManyChat sends us every message, not only after "התחלה".
+  // Then "no account" and "upgrade" answer only quote actions, not every support question.
+  const mode = routerMode();
+  const quoteOnly = mode === "off";
+  const shadow = async (result: string, user: WaUser | null) => {
+    const r = await shadowRoute(msg, user);
+    cost += r.cost;
+    return report({ result, router: "shadow", ...r.props });
+  };
   try {
     if (!incoming) {
       msg = toMessage((await lastInput(contactId)).trim(), "", "");
-      if (!msg.action && !msg.text && !msg.audioUrl) return report({ result: "empty" });
+      if (!msg.action && !msg.text && !msg.audioUrl && !msg.fileUrl) return report({ result: "empty" });
     }
     const user = await lookupUser(contactId);
-    if (!user) { await reply(contactId, T.noAccount()); await endConversation(contactId); return report({ result: "no_account" }); }
+    if (!user) {
+      if (quoteOnly || msg.action === "start") { await reply(contactId, T.noAccount()); await endConversation(contactId); return report({ result: "no_account" }); }
+      return shadow("no_account_silent", null);
+    }
     userId = user.userId;
-    if (!user.canContinue) { await reply(contactId, T.upgrade); await endConversation(contactId); return report({ result: "over_limit" }); }
+    const overLimit = async () => { await reply(contactId, T.upgrade); await endConversation(contactId); return report({ result: "over_limit" }); };
+    if (!user.canContinue && (quoteOnly || msg.action === "start")) return overLimit();
 
     if (msg.action === "start") {
       // An empty row marks the conversation as open; without one, messages go back to support (below).
@@ -125,7 +175,15 @@ async function handle(contactId: string, incoming: Msg | null) {
     if (!session) {
       if (msg.action === "save") await reply(contactId, T.expired);
       await endConversation(contactId);
-      return report({ result: "no_session" });
+      if (mode === "off" || msg.action) return report({ result: "no_session" });
+      return shadow("no_session", user);
+    }
+    if (!user.canContinue) return overLimit();
+
+    // An image or PDF in the middle of a quote: don't try to transcribe it.
+    if (msg.fileUrl && !msg.text && !msg.action) {
+      await reply(contactId, T.fileInQuote);
+      return report({ result: "file_in_quote" });
     }
 
     if (msg.action === "save") {

@@ -1,0 +1,59 @@
+import OpenAI from "openai";
+import { costUsd } from "@/lib/v2/track";
+
+/**
+ * The WhatsApp router (tiktok-hq/docs/plans/wa-assistant-plan.html, phase 1):
+ * a message outside an open quote goes to a quote, an expense, a task, or human support.
+ *
+ * WA_ROUTER_MODE
+ *   off    (default) — exactly the old behavior.
+ *   shadow — messages outside a quote are classified and logged to v2_events (event wa_message,
+ *            props route/confidence), but nobody gets an answer: they stay in Live Chat as today.
+ *   on     — acting on the route (next step, after we review the shadow logs together).
+ */
+
+export type RouterMode = "off" | "shadow" | "on";
+export type Route = "quote" | "expense" | "task" | "support" | "unsure";
+
+export function routerMode(): RouterMode {
+  const m = (process.env.WA_ROUTER_MODE ?? "").trim().toLowerCase();
+  return m === "shadow" || m === "on" ? m : "off";
+}
+
+const MODEL = "gpt-4o-mini";
+/** Below this the router asks the user instead of guessing. */
+const MIN_CONFIDENCE = 0.7;
+
+const SYSTEM = `You route WhatsApp messages that business owners send to Tiktok (תיקתוק), an Israeli app for price quotes, invoices, receipts and expenses.
+Classify the user's message (usually Hebrew, sometimes a voice transcript) into one route:
+- quote: wants to create or prepare a price quote (הצעת מחיר) for a client, or describes a job for a client with work items or prices.
+- expense: wants to record an expense, a receipt or a supplier invoice they paid (הוצאה, קבלה, חשבונית מספק).
+- task: asks for a reminder, a task, a follow-up or a meeting / calendar entry (תזכיר לי, משימה, פגישה).
+- support: a question or problem about the app, the account, payment or subscription, a greeting, thanks, or anything else.
+- unsure: it could be more than one of the above and you can't tell.
+Answer only JSON: {"route": "quote|expense|task|support|unsure", "confidence": 0-1}`;
+
+const ROUTES: Route[] = ["quote", "expense", "task", "support", "unsure"];
+
+export async function classify(openai: OpenAI, text: string): Promise<{ route: Route; confidence: number; cost: number }> {
+  const res = await openai.chat.completions.create({
+    model: MODEL,
+    temperature: 0,
+    max_tokens: 30,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: text.slice(0, 1500) },
+    ],
+  });
+  const cost = costUsd(MODEL, res.usage) ?? 0;
+  let route: Route = "unsure";
+  let confidence = 0;
+  try {
+    const j = JSON.parse(res.choices[0]?.message?.content ?? "{}") as { route?: unknown; confidence?: unknown };
+    if (typeof j.route === "string" && (ROUTES as string[]).includes(j.route)) route = j.route as Route;
+    if (typeof j.confidence === "number" && Number.isFinite(j.confidence)) confidence = Math.max(0, Math.min(1, j.confidence));
+  } catch { /* stays unsure */ }
+  if (confidence < MIN_CONFIDENCE) route = "unsure";
+  return { route, confidence, cost };
+}
