@@ -57,3 +57,27 @@ export async function classify(openai: OpenAI, text: string): Promise<{ route: R
   if (confidence < MIN_CONFIDENCE) route = "unsure";
   return { route, confidence, cost };
 }
+
+/**
+ * A photo sent outside a quote is an expense only if it looks like one: users also send
+ * screenshots of a problem to support. PDFs are not checked. Low detail = ~85 image tokens.
+ */
+export async function isReceiptImage(openai: OpenAI, url: string): Promise<{ receipt: boolean; cost: number }> {
+  const res = await openai.chat.completions.create({
+    model: MODEL,
+    temperature: 0,
+    max_tokens: 15,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: 'Is this image a receipt, an invoice, a bill or another document of a payment or expense (any language, photo or scan)? A screenshot of an app, a chat or an error is NOT. Answer only JSON: {"receipt": true|false}' },
+      { role: "user", content: [{ type: "image_url", image_url: { url, detail: "low" } }] },
+    ],
+  });
+  const cost = costUsd(MODEL, res.usage) ?? 0;
+  try {
+    const j = JSON.parse(res.choices[0]?.message?.content ?? "{}") as { receipt?: unknown };
+    return { receipt: j.receipt === true, cost };
+  } catch {
+    return { receipt: false, cost };
+  }
+}

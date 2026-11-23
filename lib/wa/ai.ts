@@ -84,7 +84,8 @@ const WHATSAPP_NOTE =
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type Suggestion = { name: string; description?: string };
 /** The quote kept in wa_sessions: the draft, plus the items last offered in the summary. */
-export type WaQuote = Partial<QuoteV2> & { suggested_items?: Suggestion[] };
+/** pending: the router asked "quote or human?" and the first message waits in messages[0] (route.ts). */
+export type WaQuote = Partial<QuoteV2> & { suggested_items?: Suggestion[]; pending?: boolean };
 
 const MAX_SUGGESTIONS = 6;
 

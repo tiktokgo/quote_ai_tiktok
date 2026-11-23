@@ -67,3 +67,26 @@ export async function saveQuote(quote: Partial<QuoteV2>, userId: string): Promis
   const redirectBase = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "";
   return { quoteId, url: redirectBase ? env(redirectBase) + quoteId : undefined };
 }
+
+export type ExpenseResult = "ok" | "not_eligible" | "user_not_found";
+
+/**
+ * whatsapp_expenses (Bubble, Live since 2026-11): saves the file as an expense of the user's company
+ * and schedules OCR. Same workflow the ManyChat "הוצאה" keyword uses.
+ * Body { manychat_id, file_url, key } — key = WHATSAPP_INTAKE_KEY.
+ * Answer { response: { ok: true } } or { response: { ok: false, error: "user_not_found" | "not_eligible" } }.
+ */
+export async function addExpense(contactId: string, fileUrl: string): Promise<ExpenseResult> {
+  const key = process.env.WHATSAPP_INTAKE_KEY;
+  if (!key) throw new Error("WHATSAPP_INTAKE_KEY not configured");
+  const base = process.env.BUBBLE_WEBHOOK_URL;
+  const url = process.env.BUBBLE_EXPENSES_URL || base?.replace(/update_quote\/?$/, "whatsapp_expenses");
+  if (!url) throw new Error("BUBBLE_EXPENSES_URL not configured");
+  const { status, text } = await post(env(url), { manychat_id: contactId, file_url: fileUrl, key });
+  if (status !== 200) throw new Error(`whatsapp_expenses HTTP ${status}: ${text.slice(0, 200)}`);
+  const j = JSON.parse(text);
+  const r = (j.response ?? j) as Record<string, unknown>;
+  if (r.ok === true || r.ok === "yes") return "ok";
+  if (r.error === "not_eligible" || r.error === "user_not_found") return r.error;
+  throw new Error(`whatsapp_expenses: ${text.slice(0, 200)}`);
+}

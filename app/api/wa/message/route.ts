@@ -4,21 +4,25 @@ import { safeEqual } from "@/lib/auth";
 import { transcribeWithUsage } from "@/lib/voiceQuote";
 import { track, costUsd } from "@/lib/v2/track";
 import { runTurn } from "@/lib/wa/ai";
-import { lookupUser, saveQuote } from "@/lib/wa/bubble";
-import { reply, endConversation, hasSavedFlow, lastInput } from "@/lib/wa/manychat";
+import { lookupUser, saveQuote, addExpense } from "@/lib/wa/bubble";
+import { reply, endConversation, startConversation, hasSavedFlow, hasChoiceFlow, lastInput } from "@/lib/wa/manychat";
 import { loadSession, saveSession, deleteSession } from "@/lib/wa/session";
+import type { WaSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
 import { isVoiceUrl, downloadVoice, fileKind } from "@/lib/wa/audio";
-import { routerMode, classify } from "@/lib/wa/router";
+import { routerMode, classify, isReceiptImage } from "@/lib/wa/router";
+import { burstCount, answeredRecently } from "@/lib/wa/batch";
 import type { WaUser } from "@/lib/wa/bubble";
 
-// Transcription + up to 3 gpt-4o calls, after the response was sent.
+// Transcription + up to 3 gpt-4o calls, after the response was sent. An expense waits ~15s for the rest of a burst.
 export const maxDuration = 60;
 
 /**
  * POST /api/wa/message — called by a ManyChat External Request (tiktok-hq/docs/whatsapp-quote.md).
  * Header x-wa-secret: WA_WEBHOOK_SECRET.
- * Body: { contact_id, text?, audio_url?, action?: "start" | "save" | "cancel" | "message" }
+ * Body: { contact_id, text?, audio_url?, action?: "start" | "save" | "cancel" | "message" | "assist" | "human" }
+ * "assist" / "human" = the router's buttons when it was not sure (MANYCHAT_FLOW_CHOICE).
+ * WA_ROUTER_MODE (lib/wa/router.ts) decides what happens to a message outside an open quote.
  * action "message" = read the last message from ManyChat (the Default Reply router sends this).
  * Answers at once ({ ok: true }) and replies on WhatsApp through the ManyChat API,
  * because ManyChat stops waiting after ~10s.
@@ -39,12 +43,19 @@ const T = {
   expired: "ההצעה הזו כבר לא פתוחה. כדי להתחיל חדשה כתבו \"התחלה\".",
   error: "משהו השתבש אצלנו 😕 נסו שוב בעוד רגע.",
   fileInQuote: "📎 קיבלתי קובץ, אבל באמצע הצעת מחיר אפשר רק לכתוב או להקליט.\nכדי לשמור את הקובץ כהוצאה, כתבו \"הוצאה\" ושלחו אותו שוב.",
+  // Router (WA_ROUTER_MODE=on)
+  choice: "לא הייתי בטוח מה צריך 🙂 להכין הצעת מחיר, או להעביר לנציג?",
+  human: "👤 העברתי לנציג, נחזור אליך כאן בהקדם.",
+  sendFile: "📎 שלחו כאן תמונה או PDF של הקבלה, ואני אוסיף אותה להוצאות.",
+  expenseSaved: (n: number) => (n === 1 ? "✅ התקבל, אפשר לשלוח עוד 📎" : `✅ התקבלו ${n} קבצים, אפשר לשלוח עוד 📎`),
+  expenseLimit: "ניצלת את 5 המסמכים החינמיים. כדי להמשיך להוסיף הוצאות מוואטסאפ, אפשר לשדרג את המנוי באפליקציה של תיקתוק.",
+  expenseNoUser: "לא מצאנו חשבון תיקתוק שמחובר לוואטסאפ הזה 🙁 פנו אלינו ונסדר את זה",
 };
 
 // Typed words that act like the buttons.
 const SAVE_WORDS = /^(שמור|לשמור|שמירה|אישור|מאשר|מאשרת)[.!]?$/;
 const CANCEL_WORDS = /^(ביטול|בטל|לבטל)[.!]?$/;
-
+const ACTIONS = ["start", "save", "cancel", "message", "assist", "human"];
 interface Body {
   contact_id?: unknown;
   text?: unknown;
@@ -69,7 +80,7 @@ export async function POST(req: NextRequest) {
   if (!/^\d{1,20}$/.test(contactId)) return Response.json({ ok: false, error: "bad_contact_id" }, { status: 400 });
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
   const action = str(body.action);
-  if (action && !["start", "save", "cancel", "message"].includes(action)) return Response.json({ ok: false, error: "bad_action" }, { status: 400 });
+  if (action && !ACTIONS.includes(action)) return Response.json({ ok: false, error: "bad_action" }, { status: 400 });
   const msg = action === "message" ? null : toMessage(str(body.text), str(body.audio_url), action);
   if (msg && !msg.action && !msg.text && !msg.audioUrl && !msg.fileUrl) return Response.json({ ok: false, error: "empty" }, { status: 400 });
 
@@ -100,8 +111,18 @@ function toMessage(text: string, audioUrl: string, action: string): Msg {
  * no Bubble call. Never throws: a router failure must not reach the user.
  */
 async function shadowRoute(msg: Msg, user: WaUser | null): Promise<{ props: Record<string, string | number | null>; cost: number }> {
-  if (msg.fileUrl) return { props: { route: "expense", why: "file", file: fileKind(msg.fileUrl) }, cost: 0 };
   if (!user) return { props: { route: "non_user" }, cost: 0 };
+  if (msg.fileUrl && fileKind(msg.fileUrl) !== "image") return { props: { route: "expense", why: "file", kind: "pdf" }, cost: 0 };
+  if (msg.fileUrl) {
+    // Users also send screenshots of a problem to support: only a receipt is an expense.
+    try {
+      const r = await isReceiptImage(new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), msg.fileUrl);
+      return { props: { route: r.receipt ? "expense" : "support", why: r.receipt ? "receipt" : "not_receipt", kind: "image" }, cost: r.cost };
+    } catch (err) {
+      console.error("[wa/router] receipt check failed:", err instanceof Error ? err.message : err);
+      return { props: { route: null, why: "error", kind: "image" }, cost: 0 };
+    }
+  }
   if (!msg.text && !msg.audioUrl) return { props: { route: null }, cost: 0 };
   let cost = 0;
   try {
@@ -122,6 +143,7 @@ async function shadowRoute(msg: Msg, user: WaUser | null): Promise<{ props: Reco
   }
 }
 
+
 /**
  * msg null = action "message": read the user's last message from ManyChat ourselves.
  * Putting it in the External Request body breaks the JSON when it has a quote (מע"מ) or a line break.
@@ -130,8 +152,11 @@ async function handle(contactId: string, incoming: Msg | null) {
   let userId: string | undefined;
   let cost = 0;
   let msg: Msg = incoming ?? { text: "", audioUrl: "", fileUrl: "", action: "" };
-  const report = (props: Record<string, string | number | boolean | null>) =>
-    track({ event: "wa_message", user_id: userId, session_id: `wa:${contactId}`, cost_usd: cost || undefined, props: { ...props, voice: !!msg.audioUrl, file: !!msg.fileUrl, action: msg.action || null } });
+  const report = (props: Record<string, string | number | boolean | null>) => {
+    const c = cost;
+    cost = 0; // an expense reports twice (saved, then replied): count the cost once
+    return track({ event: "wa_message", user_id: userId, session_id: `wa:${contactId}`, cost_usd: c || undefined, props: { ...props, voice: !!msg.audioUrl, file: !!msg.fileUrl, action: msg.action || null } });
+  };
   // With the router on, ManyChat sends us every message, not only after "התחלה".
   // Then "no account" and "upgrade" answer only quote actions, not every support question.
   const mode = routerMode();
@@ -141,6 +166,10 @@ async function handle(contactId: string, incoming: Msg | null) {
     cost += r.cost;
     return report({ result, router: "shadow", ...r.props });
   };
+  // A routed message that fails before we decided to answer stays with support, with no error text.
+  let speak = true;
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
   try {
     if (!incoming) {
       msg = toMessage((await lastInput(contactId)).trim(), "", "");
@@ -149,11 +178,101 @@ async function handle(contactId: string, incoming: Msg | null) {
     const user = await lookupUser(contactId);
     if (!user) {
       if (quoteOnly || msg.action === "start") { await reply(contactId, T.noAccount()); await endConversation(contactId); return report({ result: "no_account" }); }
-      return shadow("no_account_silent", null);
+      if (mode === "shadow") return shadow("no_account_silent", null);
+      return report({ result: "no_account_silent", router: mode });
     }
     userId = user.userId;
     const overLimit = async () => { await reply(contactId, T.upgrade); await endConversation(contactId); return report({ result: "over_limit" }); };
     if (!user.canContinue && (quoteOnly || msg.action === "start")) return overLimit();
+
+    /** Text + transcript of the voice note. "" = nothing heard. */
+    const hear = async (): Promise<string> => {
+      let said = msg.text;
+      if (msg.audioUrl) {
+        const t = await transcribeWithUsage(openai, await downloadVoice(msg.audioUrl), user.industry || undefined);
+        cost += costUsd("gpt-4o-transcribe", t.usage) ?? 0;
+        said = [said, t.text].filter(Boolean).join("\n");
+      }
+      return said;
+    };
+
+    /** One AI quote turn on session.messages (the user's message is already the last one) and the reply. */
+    const quoteTurn = async (session: WaSession, extra: Record<string, string | number | null> = {}) => {
+      speak = true;
+      const ctx = { company_name: user.companyName || "העסק", industry: user.industry || "כללי", user_id: user.userId };
+      const turn = await runTurn(openai, ctx, session.messages, session.quote);
+      cost += turn.cost;
+      session.messages.push({ role: "assistant", content: turn.text });
+      session.quote = turn.quote;
+      await saveSession(session);
+      const hasQuote = !!session.quote.items?.length;
+      if (turn.updated && hasQuote) await reply(contactId, formatSummary(session.quote, turn.text), "summary");
+      else await reply(contactId, turn.text);
+      return report({ result: "ai_reply", updated: turn.updated, items: session.quote.items?.length ?? 0, turn: session.messages.length, ...turn.flags, ...extra });
+    };
+
+    /** An image or PDF outside a quote → Bubble whatsapp_expenses; one answer per burst. */
+    const expense = async () => {
+      speak = true;
+      const r = await addExpense(contactId, msg.fileUrl);
+      if (r === "user_not_found") { await reply(contactId, T.expenseNoUser); return report({ result: "expense_no_user", router: "on" }); }
+      const marker = crypto.randomUUID().slice(0, 8);
+      if (r === "not_eligible") {
+        await report({ result: "expense_blocked", batch: marker, router: "on" });
+        speak = false;
+        if ((await burstCount(contactId, marker, "expense_blocked", "expense_blocked_replied")) == null) return;
+        if (await answeredRecently(contactId, "expense_blocked_replied")) return;
+        await reply(contactId, T.expenseLimit);
+        return report({ result: "expense_blocked_replied", router: "on" });
+      }
+      await report({ result: "expense_saved", batch: marker, router: "on" });
+      speak = false; // saved already: a failure from here must not say "something went wrong"
+      const n = await burstCount(contactId, marker, "expense_saved", "expense_replied");
+      if (n == null) return; // a newer file in this burst answers for all
+      await reply(contactId, T.expenseSaved(n));
+      return report({ result: "expense_replied", n, router: "on" });
+    };
+
+    /** WA_ROUTER_MODE=on: a message outside an open quote. */
+    const routeOn = async () => {
+      speak = false;
+      if (msg.fileUrl) {
+        if (fileKind(msg.fileUrl) === "image") {
+          const r = await isReceiptImage(openai, msg.fileUrl);
+          cost += r.cost;
+          if (!r.receipt) { await endConversation(contactId); return report({ result: "routed", route: "support", why: "not_receipt", router: "on" }); }
+        }
+        return expense();
+      }
+      const said = await hear();
+      if (!said) { await endConversation(contactId); return report({ result: "routed", route: null, why: "no_speech", router: "on" }); }
+      const c = await classify(openai, said);
+      cost += c.cost;
+      const props = { route: c.route, confidence: Math.round(c.confidence * 100) / 100, router: "on" };
+
+      if (c.route === "quote") {
+        if (!user.canContinue) return overLimit();
+        await startConversation(contactId);
+        return quoteTurn({ contact_id: contactId, user_id: user.userId, messages: [{ role: "user", content: said }], quote: {} }, props);
+      }
+      if (c.route === "expense") {
+        speak = true;
+        await reply(contactId, T.sendFile);
+        await endConversation(contactId);
+        return report({ result: "routed", ...props });
+      }
+      if (c.route === "unsure" && hasChoiceFlow()) {
+        // The message waits in a "pending" session until a button is pressed.
+        speak = true;
+        await saveSession({ contact_id: contactId, user_id: user.userId, messages: [{ role: "user", content: said }], quote: { pending: true } });
+        await reply(contactId, T.choice, "choice");
+        await endConversation(contactId);
+        return report({ result: "asked", ...props });
+      }
+      // support, task (phase 2), unsure without the CHOICE flow: stays in Live Chat for a person.
+      await endConversation(contactId);
+      return report({ result: "routed", ...props });
+    };
 
     if (msg.action === "start") {
       // An empty row marks the conversation as open; without one, messages go back to support (below).
@@ -168,17 +287,39 @@ async function handle(contactId: string, incoming: Msg | null) {
       return report({ result: "cancelled" });
     }
 
-    const session = await loadSession(contactId, user.userId);
+    let session = await loadSession(contactId, user.userId);
+
+    // The router asked "quote or human?" about this message.
+    if (session?.quote.pending) {
+      if (msg.action === "human") {
+        await deleteSession(contactId);
+        await reply(contactId, T.human);
+        await endConversation(contactId);
+        return report({ result: "to_human" });
+      }
+      if (msg.action === "assist") {
+        if (!user.canContinue) { await deleteSession(contactId); return overLimit(); }
+        session.quote = {};
+        await startConversation(contactId);
+        return await quoteTurn(session, { route: "quote", why: "button" });
+      }
+      // Anything else: forget the question and route the new message.
+      await deleteSession(contactId);
+      session = null;
+    }
+
     // No open conversation (a day without activity, or ManyChat still "on" from before):
-    // no answer, the message stays in Live Chat for a person.
+    // off/shadow — no answer, the message stays in Live Chat for a person. on — the router decides.
     // The save button of an old summary still gets an answer.
     if (!session) {
       if (msg.action === "save") await reply(contactId, T.expired);
+      if (mode === "on" && !msg.action) return await routeOn();
       await endConversation(contactId);
       if (mode === "off" || msg.action) return report({ result: "no_session" });
       return shadow("no_session", user);
     }
     if (!user.canContinue) return overLimit();
+    if (msg.action === "assist" || msg.action === "human") return report({ result: "stale_button" });
 
     // An image or PDF in the middle of a quote: don't try to transcribe it.
     if (msg.fileUrl && !msg.text && !msg.action) {
@@ -195,31 +336,13 @@ async function handle(contactId: string, incoming: Msg | null) {
       return report({ result: "saved", mode: session.quote.pricing_mode ?? null, items: session.quote.items.length });
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    let said = msg.text;
-    if (msg.audioUrl) {
-      const audio = await downloadVoice(msg.audioUrl);
-      const t = await transcribeWithUsage(openai, audio, user.industry || undefined);
-      cost += costUsd("gpt-4o-transcribe", t.usage) ?? 0;
-      said = [said, t.text].filter(Boolean).join("\n");
-      if (!said) { await reply(contactId, T.noSpeech); return report({ result: "no_speech" }); }
-    }
-
+    const said = await hear();
+    if (!said) { await reply(contactId, T.noSpeech); return report({ result: "no_speech" }); }
     session.messages.push({ role: "user", content: said });
-    const ctx = { company_name: user.companyName || "העסק", industry: user.industry || "כללי", user_id: user.userId };
-    const turn = await runTurn(openai, ctx, session.messages, session.quote);
-    cost += turn.cost;
-    session.messages.push({ role: "assistant", content: turn.text });
-    session.quote = turn.quote;
-    await saveSession(session);
-
-    const hasQuote = !!session.quote.items?.length;
-    if (turn.updated && hasQuote) await reply(contactId, formatSummary(session.quote, turn.text), "summary");
-    else await reply(contactId, turn.text);
-    return report({ result: "ai_reply", updated: turn.updated, items: session.quote.items?.length ?? 0, turn: session.messages.length, ...turn.flags });
+    return await quoteTurn(session);
   } catch (err) {
     console.error("[wa/message] error:", err instanceof Error ? err.message : err);
-    await reply(contactId, T.error).catch(() => {});
-    return report({ result: "error" });
+    if (speak) await reply(contactId, T.error).catch(() => {});
+    return report({ result: "error", router: mode });
   }
 }

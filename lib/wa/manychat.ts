@@ -5,6 +5,8 @@
  *   MANYCHAT_FLOW_SUMMARY — {{wa_quote_reply}} + buttons "לשמור" / "לשנות"
  *   MANYCHAT_FLOW_SAVED   — {{wa_quote_reply}} + button "הצעה חדשה" (→ the "התחלה" automation)
  *   MANYCHAT_FLOW_TEXT    — {{wa_quote_reply}} only
+ *   MANYCHAT_FLOW_CHOICE  — {{wa_quote_reply}} + buttons "📝 הצעת מחיר" (External Request action "assist")
+ *                           / "👤 נציג" (action "human") — the router asks when it is not sure
  * Buttons and wording live in ManyChat, so they can change without a deploy.
  */
 
@@ -43,14 +45,16 @@ export async function lastInput(contactId: string): Promise<string> {
   return typeof v === "string" ? v : "";
 }
 
-export type ReplyKind ="summary" | "saved" | "text";
+export type ReplyKind = "summary" | "saved" | "text" | "choice";
 
 /** "saved" has its own flow (button "הצעה חדשה") once MANYCHAT_FLOW_SAVED is set; until then, plain text. */
 export const hasSavedFlow = () => !!process.env.MANYCHAT_FLOW_SAVED;
+/** Without the CHOICE flow the router does not ask: an unsure message stays with support. */
+export const hasChoiceFlow = () => !!process.env.MANYCHAT_FLOW_CHOICE;
 
 export async function reply(contactId: string, text: string, kind: ReplyKind = "text"): Promise<void> {
   if (kind === "saved" && !hasSavedFlow()) kind = "text";
-  const flow = { summary: process.env.MANYCHAT_FLOW_SUMMARY, saved: process.env.MANYCHAT_FLOW_SAVED, text: process.env.MANYCHAT_FLOW_TEXT }[kind];
+  const flow = { summary: process.env.MANYCHAT_FLOW_SUMMARY, saved: process.env.MANYCHAT_FLOW_SAVED, text: process.env.MANYCHAT_FLOW_TEXT, choice: process.env.MANYCHAT_FLOW_CHOICE }[kind];
   if (!flow) throw new Error(`MANYCHAT_FLOW_${kind.toUpperCase()} not configured`);
   const subscriber_id = Number(contactId);
   await call("/subscriber/setCustomFieldByName", {
@@ -71,5 +75,14 @@ export async function endConversation(contactId: string): Promise<void> {
     await call("/subscriber/setCustomFieldByName", { subscriber_id: Number(contactId), field_name: MODE_FIELD, field_value: "off" });
   } catch (err) {
     console.error("[wa/manychat] mode off failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+/** The router opened a quote from a free message: same as "התחלה", so the next messages show "⏳". Never throws. */
+export async function startConversation(contactId: string): Promise<void> {
+  try {
+    await call("/subscriber/setCustomFieldByName", { subscriber_id: Number(contactId), field_name: MODE_FIELD, field_value: "on" });
+  } catch (err) {
+    console.error("[wa/manychat] mode on failed:", err instanceof Error ? err.message : err);
   }
 }
