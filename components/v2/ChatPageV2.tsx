@@ -1256,6 +1256,9 @@ function QuotePanelV2({
 }
 
 // ── Item editor ───────────────────────────────────────────────────────────────
+/** Quantity and price fields take digits, one decimal point and thousands commas only. */
+const numbersOnly = (s: string) => s.replace(/[^\d.,]/g, "").replace(/(\..*)\./g, "$1");
+
 function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
   item: QuoteItemV2; perItem: boolean;
   onDone: (patch: Partial<QuoteItemV2>) => void; onCancel: () => void;
@@ -1310,11 +1313,11 @@ function ItemEditor({ item, perItem, onDone, onCancel, onDelete, onReword }: {
       )}
       {perItem && (
         <div style={{ display: "flex", gap: 6 }}>
-          <input aria-label="כמות" inputMode="decimal" value={d.quantity} onChange={(e) => setD({ ...d, quantity: e.target.value })} style={{ ...inputStyle, width: 64 }} />
+          <input aria-label="כמות" inputMode="decimal" value={d.quantity} onChange={(e) => setD({ ...d, quantity: numbersOnly(e.target.value) })} style={{ ...inputStyle, width: 64 }} />
           <select aria-label="יחידה" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} style={{ ...inputStyle, width: 80 }}>
             {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
           </select>
-          <input aria-label="מחיר ליחידה לפני מע״מ" inputMode="decimal" placeholder="מחיר ליחידה לפני מע״מ" value={d.unit_price} onChange={(e) => setD({ ...d, unit_price: e.target.value })} style={{ ...inputStyle, flex: 1 }} />
+          <input aria-label="מחיר ליחידה לפני מע״מ" title="מחיר ליחידה לפני מע״מ" inputMode="decimal" placeholder="מחיר ₪" value={d.unit_price} onChange={(e) => setD({ ...d, unit_price: numbersOnly(e.target.value) })} style={{ ...inputStyle, width: 96 }} />
         </div>
       )}
       {perItem && parse(d.unit_price) > 0 && (
