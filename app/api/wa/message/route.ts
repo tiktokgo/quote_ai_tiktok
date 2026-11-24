@@ -11,10 +11,10 @@ import type { WaSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
 import { isVoiceUrl, downloadVoice, fileKind } from "@/lib/wa/audio";
 import { routerMode, classify, isReceiptImage } from "@/lib/wa/router";
-import { burstCount, answeredRecently } from "@/lib/wa/batch";
+import { burstCount, answeredRecently, firstInBurst } from "@/lib/wa/batch";
 import type { WaUser } from "@/lib/wa/bubble";
 
-// Transcription + up to 3 gpt-4o calls, after the response was sent. An expense waits ~15s for the rest of a burst.
+// Transcription + up to 3 gpt-4o calls, after the response was sent. An expense waits ~15s for the rest of a burst (the first file is answered at once).
 export const maxDuration = 60;
 
 /**
@@ -49,7 +49,8 @@ ${PURCHASE_URL()}`,
   choice: "לא הייתי בטוח מה צריך 🙂 להכין הצעת מחיר, או להעביר לנציג?",
   human: "👤 העברתי לנציג, נחזור אליך כאן בהקדם.",
   sendFile: "📎 שלחו כאן תמונה או PDF של הקבלה, ואני אוסיף אותה להוצאות.",
-  expenseSaved: (n: number) => (n === 1 ? "✅ התקבל, אפשר לשלוח עוד 📎" : `✅ התקבלו ${n} קבצים, אפשר לשלוח עוד 📎`),
+  expenseFirst: "✅ התקבל! אפשר לשלוח עוד, גם כמה ביחד 📎",
+  expenseTotal: (n: number) => `✅ סה״כ התקבלו ${n} קבצים`,
   expenseLimit: `ניצלת את 5 המסמכים החינמיים. כדי להמשיך להוסיף הוצאות מוואטסאפ, אפשר לשדרג את המנוי באפליקציה של תיקתוק או דרך הקישור הבא:
 ${PURCHASE_URL()}`,
   expenseNoUser: "לא מצאנו חשבון תיקתוק שמחובר לוואטסאפ הזה 🙁 פנו אלינו ונסדר את זה",
@@ -230,9 +231,16 @@ async function handle(contactId: string, incoming: Msg | null) {
       }
       await report({ result: "expense_saved", batch: marker, router: "on" });
       speak = false; // saved already: a failure from here must not say "something went wrong"
+      // The first file of a burst is answered at once; the rest wait for the burst to end.
+      try {
+        if (await firstInBurst(contactId, marker, "expense_saved", "expense_replied")) await reply(contactId, T.expenseFirst);
+      } catch (err) {
+        console.error("[wa/message] first-in-burst check failed:", err instanceof Error ? err.message : err);
+      }
       const n = await burstCount(contactId, marker, "expense_saved", "expense_replied");
       if (n == null) return; // a newer file in this burst answers for all
-      await reply(contactId, T.expenseSaved(n));
+      // One file got its "✅ התקבל" already. Several files: one total. Either way the row closes the burst.
+      if (n > 1) await reply(contactId, T.expenseTotal(n));
       return report({ result: "expense_replied", n, router: "on" });
     };
 

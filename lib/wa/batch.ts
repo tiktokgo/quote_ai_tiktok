@@ -60,3 +60,19 @@ export async function burstCount(contactId: string, marker: string, result: stri
 export async function answeredRecently(contactId: string, result: string): Promise<boolean> {
   return (await recent(contactId, [result])).length > 0;
 }
+
+/** Files in the open burst (since the last answer), newest first. */
+export function openBurst(rows: Row[], result: string): Row[] {
+  const open: Row[] = [];
+  for (const r of rows) {
+    if (r.props.result !== result) break;
+    open.push(r);
+  }
+  return open;
+}
+
+/** True when this file opened a new burst: it gets the immediate "✅ התקבל". */
+export async function firstInBurst(contactId: string, marker: string, result: string, replied: string): Promise<boolean> {
+  const open = openBurst(await recent(contactId, [result, replied]), result);
+  return open.length === 1 && open[0].props.batch === marker;
+}
