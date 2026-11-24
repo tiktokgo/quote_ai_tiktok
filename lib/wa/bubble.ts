@@ -1,5 +1,7 @@
 import { buildPerItemPayload, buildTotalPayload, toBubbleTest } from "@/lib/v2/quote";
 import type { QuoteV2 } from "@/lib/v2/quote";
+import { toIso, DEFAULT_TIME } from "./task";
+import type { TaskDraft } from "./task";
 
 /**
  * Bubble calls for the WhatsApp quote chat.
@@ -89,4 +91,27 @@ export async function addExpense(contactId: string, fileUrl: string): Promise<Ex
   if (r.ok === true || r.ok === "yes") return "ok";
   if (r.error === "not_eligible" || r.error === "user_not_found") return r.error;
   throw new Error(`whatsapp_expenses: ${text.slice(0, 200)}`);
+}
+
+/**
+ * wa_create_task (Bubble backend workflow, User & admin, 24/11/2026): creates a Tasks row
+ * (status בטיפול, owner = user, company = user's related_to_company). Answer { response: { task_id } }.
+ * due_date = ISO in UTC; no date → not sent.
+ */
+export async function createTask(userId: string, t: TaskDraft): Promise<string> {
+  const base = process.env.BUBBLE_WEBHOOK_URL;
+  const url = process.env.BUBBLE_TASK_URL || base?.replace(/update_quote\/?$/, "wa_create_task");
+  if (!url) throw new Error("BUBBLE_TASK_URL not configured");
+  const body: Record<string, unknown> = { user: userId, title: t.title, task_type: t.task_type };
+  if (t.description) body.description = t.description;
+  if (t.date) body.due_date = toIso(t.date, t.time ?? DEFAULT_TIME);
+  const { status, text } = await post(env(url), body);
+  if (status !== 200) throw new Error(`wa_create_task HTTP ${status}: ${text.slice(0, 200)}`);
+  let taskId: unknown;
+  try {
+    const j = JSON.parse(text);
+    taskId = j.task_id ?? j.response?.task_id;
+  } catch { /* below */ }
+  if (typeof taskId !== "string" || !taskId) throw new Error("wa_create_task: no task_id");
+  return taskId;
 }

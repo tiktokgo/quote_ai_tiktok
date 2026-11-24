@@ -45,16 +45,19 @@ export async function lastInput(contactId: string): Promise<string> {
   return typeof v === "string" ? v : "";
 }
 
-export type ReplyKind = "summary" | "saved" | "text" | "choice";
+export type ReplyKind = "summary" | "saved" | "text" | "choice" | "task";
 
 /** "saved" has its own flow (button "הצעה חדשה") once MANYCHAT_FLOW_SAVED is set; until then, plain text. */
 export const hasSavedFlow = () => !!process.env.MANYCHAT_FLOW_SAVED;
 /** Without the CHOICE flow the router does not ask: an unsure message stays with support. */
 export const hasChoiceFlow = () => !!process.env.MANYCHAT_FLOW_CHOICE;
+/** [לשמור] / [ביטול] under a task summary; without it the user types "שמור". */
+export const hasTaskFlow = () => !!process.env.MANYCHAT_FLOW_TASK;
 
 export async function reply(contactId: string, text: string, kind: ReplyKind = "text"): Promise<void> {
   if (kind === "saved" && !hasSavedFlow()) kind = "text";
-  const flow = { summary: process.env.MANYCHAT_FLOW_SUMMARY, saved: process.env.MANYCHAT_FLOW_SAVED, text: process.env.MANYCHAT_FLOW_TEXT, choice: process.env.MANYCHAT_FLOW_CHOICE }[kind];
+  if (kind === "task" && !hasTaskFlow()) kind = "text";
+  const flow = { summary: process.env.MANYCHAT_FLOW_SUMMARY, saved: process.env.MANYCHAT_FLOW_SAVED, text: process.env.MANYCHAT_FLOW_TEXT, choice: process.env.MANYCHAT_FLOW_CHOICE, task: process.env.MANYCHAT_FLOW_TASK }[kind];
   if (!flow) throw new Error(`MANYCHAT_FLOW_${kind.toUpperCase()} not configured`);
   const subscriber_id = Number(contactId);
   await call("/subscriber/setCustomFieldByName", {

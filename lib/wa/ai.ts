@@ -1,3 +1,4 @@
+import type { TaskDraft } from "./task";
 import OpenAI from "openai";
 import { buildSystemPromptV2 } from "@/lib/v2/systemPrompt";
 import { guardUpdate } from "@/lib/v2/guard";
@@ -85,7 +86,8 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type Suggestion = { name: string; description?: string };
 /** The quote kept in wa_sessions: the draft, plus the items last offered in the summary. */
 /** pending: the router asked "quote or human?" and the first message waits in messages[0] (route.ts). */
-export type WaQuote = Partial<QuoteV2> & { suggested_items?: Suggestion[]; pending?: boolean };
+/** task: the router opened a task / meeting instead of a quote (lib/wa/task.ts). */
+export type WaQuote = Partial<QuoteV2> & { suggested_items?: Suggestion[]; pending?: boolean; task?: TaskDraft };
 
 const MAX_SUGGESTIONS = 6;
 

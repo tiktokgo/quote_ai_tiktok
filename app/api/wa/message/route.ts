@@ -4,14 +4,15 @@ import { safeEqual } from "@/lib/auth";
 import { transcribeWithUsage } from "@/lib/voiceQuote";
 import { track, costUsd } from "@/lib/v2/track";
 import { runTurn } from "@/lib/wa/ai";
-import { lookupUser, saveQuote, addExpense } from "@/lib/wa/bubble";
-import { reply, endConversation, startConversation, hasSavedFlow, hasChoiceFlow, lastInput } from "@/lib/wa/manychat";
+import { lookupUser, saveQuote, addExpense, createTask } from "@/lib/wa/bubble";
+import { reply, endConversation, startConversation, hasSavedFlow, hasChoiceFlow, hasTaskFlow, lastInput } from "@/lib/wa/manychat";
 import { loadSession, saveSession, deleteSession } from "@/lib/wa/session";
 import type { WaSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
 import { isVoiceUrl, downloadVoice, fileKind } from "@/lib/wa/audio";
 import { routerMode, classify, isReceiptImage } from "@/lib/wa/router";
 import { burstCount, answeredRecently, firstInBurst } from "@/lib/wa/batch";
+import { extractTask, formatTask } from "@/lib/wa/task";
 import type { WaUser } from "@/lib/wa/bubble";
 
 // Transcription + up to 3 gpt-4o calls, after the response was sent. An expense waits ~15s for the rest of a burst (the first file is answered at once).
@@ -55,6 +56,10 @@ ${PURCHASE_URL()}`,
   expenseLimit: `ניצלת את 5 המסמכים החינמיים. כדי להמשיך להוסיף הוצאות מוואטסאפ, אפשר לשדרג את המנוי באפליקציה של תיקתוק או דרך הקישור הבא:
 ${PURCHASE_URL()}`,
   expenseNoUser: "לא מצאנו חשבון תיקתוק שמחובר לוואטסאפ הזה 🙁 פנו אלינו ונסדר את זה",
+  // Tasks and meetings (phase 2)
+  taskSaved: "✅ נשמר במשימות שלך בתיקתוק.",
+  taskCancelled: "בוטל, לא נשמר כלום.",
+  fileInTask: "📎 קיבלתי קובץ, אבל עכשיו אנחנו באמצע משימה. כתבו \"שמור\" או \"ביטול\", ואז שלחו את הקובץ שוב.",
 };
 
 // Typed words that act like the buttons.
@@ -216,6 +221,17 @@ async function handle(contactId: string, incoming: Msg | null) {
       return report({ result: "ai_reply", updated: turn.updated, items: session.quote.items?.length ?? 0, turn: session.messages.length, ...turn.flags, ...extra });
     };
 
+    /** A task / meeting draft from all the user's messages so far, and its summary with [לשמור] / [ביטול]. */
+    const taskTurn = async (session: WaSession, extra: Record<string, string | number | null> = {}) => {
+      speak = true;
+      const r = await extractTask(openai, session.messages);
+      cost += r.cost;
+      session.quote = { task: r.task };
+      await saveSession(session);
+      await reply(contactId, formatTask(r.task, hasTaskFlow()), "task");
+      return report({ result: "task_draft", task_type: r.task.task_type, has_date: !!r.task.date, has_time: !!r.task.time, turn: session.messages.length, ...extra });
+    };
+
     /** An image or PDF outside a quote → Bubble whatsapp_expenses; one answer per burst. */
     const expense = async () => {
       speak = true;
@@ -273,6 +289,11 @@ async function handle(contactId: string, incoming: Msg | null) {
         await endConversation(contactId);
         return report({ result: "routed", ...props });
       }
+      if (c.route === "task") {
+        // Same as a quote: the conversation stays open (⏳) until save or cancel.
+        await startConversation(contactId);
+        return taskTurn({ contact_id: contactId, user_id: user.userId, messages: [{ role: "user", content: said }], quote: {} }, props);
+      }
       if (c.route === "unsure" && hasChoiceFlow()) {
         // The message waits in a "pending" session until a button is pressed.
         speak = true;
@@ -281,7 +302,7 @@ async function handle(contactId: string, incoming: Msg | null) {
         await endConversation(contactId);
         return report({ result: "asked", ...props });
       }
-      // support, task (phase 2), unsure without the CHOICE flow: stays in Live Chat for a person.
+      // support, unsure without the CHOICE flow: stays in Live Chat for a person.
       await endConversation(contactId);
       return report({ result: "routed", ...props });
     };
@@ -293,8 +314,9 @@ async function handle(contactId: string, incoming: Msg | null) {
       return report({ result: "started" });
     }
     if (msg.action === "cancel") {
+      const open = await loadSession(contactId, user.userId).catch(() => null);
       await deleteSession(contactId);
-      await reply(contactId, T.cancelled);
+      await reply(contactId, open?.quote.task ? T.taskCancelled : T.cancelled);
       await endConversation(contactId);
       return report({ result: "cancelled" });
     }
@@ -340,6 +362,28 @@ async function handle(contactId: string, incoming: Msg | null) {
       if (mode === "off" || msg.action) return report({ result: "no_session" });
       return shadow("no_session", user);
     }
+
+    // An open task / meeting: save, or a correction that updates the draft. Not limited by the 5 free quotes.
+    if (session.quote.task) {
+      if (msg.action === "assist" || msg.action === "human") return report({ result: "stale_button" });
+      if (msg.fileUrl && !msg.text) {
+        await reply(contactId, T.fileInTask);
+        return report({ result: "file_in_task" });
+      }
+      if (msg.action === "save") {
+        const task = session.quote.task;
+        await createTask(user.userId, task);
+        await deleteSession(contactId);
+        await reply(contactId, T.taskSaved);
+        await endConversation(contactId);
+        return report({ result: "task_saved", task_type: task.task_type, has_date: !!task.date, has_time: !!task.time });
+      }
+      const said = await hear();
+      if (!said) { await reply(contactId, T.noSpeech); return report({ result: "no_speech" }); }
+      session.messages.push({ role: "user", content: said });
+      return await taskTurn(session);
+    }
+
     if (!user.canContinue) return overLimit();
     if (msg.action === "assist" || msg.action === "human") return report({ result: "stale_button" });
 
