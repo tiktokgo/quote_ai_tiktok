@@ -48,6 +48,7 @@ ${PURCHASE_URL()}`,
   // Router (WA_ROUTER_MODE=on)
   choice: "לא הייתי בטוח מה צריך 🙂 להכין הצעת מחיר, או להעביר לנציג?",
   human: "👤 העברתי לנציג, נחזור אליך כאן בהקדם.",
+  assistStale: "🙂 כתבו או הקליטו מה צריך, למשל \"תכין לי הצעה ל...\", ואני על זה.",
   sendFile: "📎 שלחו כאן תמונה או PDF של הקבלה, ואני אוסיף אותה להוצאות.",
   expenseFirst: "✅ התקבל! אפשר לשלוח עוד, גם כמה ביחד 📎",
   expenseTotal: (n: number) => `✅ סה״כ התקבלו ${n} קבצים`,
@@ -322,6 +323,16 @@ async function handle(contactId: string, incoming: Msg | null) {
     // No open conversation (a day without activity, or ManyChat still "on" from before):
     // off/shadow — no answer, the message stays in Live Chat for a person. on — the router decides.
     // The save button of an old summary still gets an answer.
+    // A button of an old "quote or human?" question (another message came in between): still answer it.
+    if (msg.action === "human") {
+      await reply(contactId, T.human);
+      if (!session) await endConversation(contactId);
+      return report({ result: "to_human", why: "stale_button" });
+    }
+    if (msg.action === "assist" && !session) {
+      await reply(contactId, T.assistStale);
+      return report({ result: "stale_button" });
+    }
     if (!session) {
       if (msg.action === "save") await reply(contactId, T.expired);
       if (mode === "on" && !msg.action) return await routeOn();
