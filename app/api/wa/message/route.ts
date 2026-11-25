@@ -31,6 +31,8 @@ export const maxDuration = 60;
 
 const SIGNUP_URL = () => process.env.WA_SIGNUP_URL || "https://app.tik-tok.co.il";
 const PURCHASE_URL = () => process.env.WA_PURCHASE_URL || "https://app.tik-tok.co.il/purchase";
+/** The "what can I do here" menu goes to the same contact at most once a month. */
+const MENU_EVERY_MS = 30 * 24 * 3600 * 1000;
 
 const T = {
   start: "🎤 ספרו לי על הצעת המחיר: למי, מה העבודה וכמה זה עולה. אפשר לכתוב או להקליט.",
@@ -60,6 +62,13 @@ ${PURCHASE_URL()}`,
   taskSaved: "✅ נשמר במשימות שלך בתיקתוק.",
   taskCancelled: "בוטל, לא נשמר כלום.",
   fileInTask: "📎 קיבלתי קובץ, אבל עכשיו אנחנו באמצע משימה. כתבו \"שמור\" או \"ביטול\", ואז שלחו את הקובץ שוב.",
+  // A support message, once per MENU_EVERY_MS per contact.
+  menu: `היי 👋 קיבלנו את ההודעה, ונציג אמיתי (לא בוט 🙂) יחזור אליך בהקדם.
+
+אגב, כאן בוואטסאפ אפשר גם:
+📝 *הצעת מחיר*: לכתוב או להקליט, למשל "תכין הצעה לצביעת דירה ל..."
+🧾 *הוצאה*: לשלוח צילום של קבלה, והיא נכנסת להוצאות העסק
+📅 *משימה או פגישה*: "תזכיר לי מחר בעשר להתקשר לדני", והיא נכנסת ליומן`,
 };
 
 // Typed words that act like the buttons.
@@ -302,8 +311,21 @@ async function handle(contactId: string, incoming: Msg | null) {
         await endConversation(contactId);
         return report({ result: "asked", ...props });
       }
-      // support, unsure without the CHOICE flow: stays in Live Chat for a person.
+      // support, auto_reply, unsure without the CHOICE flow: stays in Live Chat for a person.
       await endConversation(contactId);
+      // A support message gets "we got it, a person will answer" + what the bot can do, once per MENU_EVERY.
+      // Never to an auto-reply ("תודה שפנית ל...") after our own notifications: two bots must not talk.
+      if (c.route === "support") {
+        try {
+          if (!(await answeredRecently(contactId, "menu", MENU_EVERY_MS))) {
+            await reply(contactId, T.menu);
+            return report({ result: "menu", ...props });
+          }
+        } catch (err) {
+          // The message still waits for a person in Live Chat: no error text.
+          console.error("[wa/message] menu failed:", err instanceof Error ? err.message : err);
+        }
+      }
       return report({ result: "routed", ...props });
     };
 

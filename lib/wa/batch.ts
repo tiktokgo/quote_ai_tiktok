@@ -23,8 +23,8 @@ function rest(path: string): Promise<Response> {
   });
 }
 
-async function recent(contactId: string, results: string[]): Promise<Row[]> {
-  const since = new Date(Date.now() - WINDOW_MS).toISOString();
+async function recent(contactId: string, results: string[], windowMs = WINDOW_MS): Promise<Row[]> {
+  const since = new Date(Date.now() - windowMs).toISOString();
   const q = [
     `session_id=eq.${encodeURIComponent(`wa:${contactId}`)}`,
     "event=eq.wa_message",
@@ -56,9 +56,9 @@ export async function burstCount(contactId: string, marker: string, result: stri
   return countBurst(await recent(contactId, [result, replied]), marker, result);
 }
 
-/** True when the user already got this answer in the last 10 minutes (e.g. "upgrade" once per burst). */
-export async function answeredRecently(contactId: string, result: string): Promise<boolean> {
-  return (await recent(contactId, [result])).length > 0;
+/** True when the user already got this answer in the window (default 10 minutes: "upgrade" once per burst; the menu: 30 days). */
+export async function answeredRecently(contactId: string, result: string, windowMs = WINDOW_MS): Promise<boolean> {
+  return (await recent(contactId, [result], windowMs)).length > 0;
 }
 
 /** Files in the open burst (since the last answer), newest first. */

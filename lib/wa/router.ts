@@ -16,7 +16,7 @@ import { costUsd } from "@/lib/v2/track";
  */
 
 export type RouterMode = "off" | "shadow" | "on";
-export type Route = "quote" | "expense" | "task" | "support" | "unsure";
+export type Route = "quote" | "expense" | "task" | "support" | "auto_reply" | "unsure";
 
 export function routerMode(contactId?: string): RouterMode {
   const m = (process.env.WA_ROUTER_MODE ?? "").trim().toLowerCase();
@@ -35,11 +35,12 @@ Classify the user's message (usually Hebrew, sometimes a voice transcript) into 
 - quote: wants to create or prepare a price quote (הצעת מחיר) for a client, or describes a job for a client with work items or prices.
 - expense: wants to record an expense, a receipt or a supplier invoice they paid (הוצאה, קבלה, חשבונית מספק).
 - task: asks for a reminder, a task, a follow-up or a meeting / calendar entry (תזכיר לי, משימה, פגישה).
+- auto_reply: an automatic message of the other side's WhatsApp Business, not written by a person now: "תודה שפנית ל...", "נחזור אליך בהקדם", away / out of office / business hours, an auto greeting of a business.
 - support: a question or problem about the app, the account, payment or subscription, a greeting, thanks, or anything else.
 - unsure: it could be more than one of the above and you can't tell.
-Answer only JSON: {"route": "quote|expense|task|support|unsure", "confidence": 0-1}`;
+Answer only JSON: {"route": "quote|expense|task|support|auto_reply|unsure", "confidence": 0-1}`;
 
-const ROUTES: Route[] = ["quote", "expense", "task", "support", "unsure"];
+const ROUTES: Route[] = ["quote", "expense", "task", "support", "auto_reply", "unsure"];
 
 export async function classify(openai: OpenAI, text: string): Promise<{ route: Route; confidence: number; cost: number }> {
   const res = await openai.chat.completions.create({
