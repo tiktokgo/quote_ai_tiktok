@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@fontsource/rubik": "^5.3.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@vercel/blob": "^2.3.1",
     "jsonwebtoken": "^9.0.3",
