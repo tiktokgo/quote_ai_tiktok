@@ -69,6 +69,18 @@ ${PURCHASE_URL()}`,
 📝 *הצעת מחיר*: לכתוב או להקליט, למשל "תכין הצעה לצביעת דירה ל..."
 🧾 *הוצאה*: לשלוח צילום של קבלה, והיא נכנסת להוצאות העסק
 📅 *משימה או פגישה*: "תזכיר לי מחר בעשר להתקשר לדני", והיא נכנסת ליומן`,
+  menuUpgrade: `💎 ניצלת את 5 ההצעות החינמיות. כדי להמשיך להכין הצעות, אפשר לשדרג כאן: ${PURCHASE_URL()}`,
+  // No account linked to this number: maybe there is one on another number (a person links it).
+  menuNoAccount: () => `היי 👋 קיבלנו את ההודעה, ונציג אמיתי (לא בוט 🙂) יחזור אליך בהקדם.
+
+לא מצאנו חשבון תיקתוק שמחובר למספר הזה.
+• *כבר יש לך חשבון?* הנציג יחבר אותו
+• *עוד אין?* פותחים כאן בחינם: ${SIGNUP_URL()}
+
+עם חשבון, אפשר כאן בוואטסאפ:
+📝 הצעת מחיר, בכתב או בהקלטה
+🧾 הוצאה: צילום של קבלה
+📅 משימה או פגישה ביומן`,
 };
 
 // Typed words that act like the buttons.
@@ -198,6 +210,23 @@ async function handle(contactId: string, incoming: Msg | null) {
     if (!user) {
       if (quoteOnly || msg.action === "start") { await reply(contactId, T.noAccount()); await endConversation(contactId); return report({ result: "no_account" }); }
       if (mode === "shadow") return shadow("no_account_silent", null);
+      // A typed message from a number with no linked account: "a person will answer" + how to open
+      // (or link) an account, once a month. Not to an auto-reply, not when the router is unsure, not to files.
+      if (mode === "on" && !msg.action && msg.text && !msg.fileUrl) {
+        speak = false;
+        try {
+          const c = await classify(openai, msg.text);
+          cost += c.cost;
+          const props = { route: c.route, confidence: Math.round(c.confidence * 100) / 100, router: "on" };
+          if (c.route !== "auto_reply" && c.route !== "unsure" && !(await answeredRecently(contactId, "menu", MENU_EVERY_MS))) {
+            await reply(contactId, T.menuNoAccount());
+            return report({ result: "menu", why: "no_account", ...props });
+          }
+          return report({ result: "no_account_silent", ...props });
+        } catch (err) {
+          console.error("[wa/message] no-account menu failed:", err instanceof Error ? err.message : err);
+        }
+      }
       return report({ result: "no_account_silent", router: mode });
     }
     userId = user.userId;
@@ -318,8 +347,8 @@ async function handle(contactId: string, incoming: Msg | null) {
       if (c.route === "support") {
         try {
           if (!(await answeredRecently(contactId, "menu", MENU_EVERY_MS))) {
-            await reply(contactId, T.menu);
-            return report({ result: "menu", ...props });
+            await reply(contactId, user.canContinue ? T.menu : `${T.menu}\n\n${T.menuUpgrade}`);
+            return report({ result: "menu", ...props, ...(user.canContinue ? {} : { why: "over_limit" }) });
           }
         } catch (err) {
           // The message still waits for a person in Live Chat: no error text.
