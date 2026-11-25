@@ -460,6 +460,8 @@ async function handle(contactId: string, incoming: Msg | null) {
   } catch (err) {
     console.error("[wa/message] error:", err instanceof Error ? err.message : err);
     if (speak) await reply(contactId, T.error).catch(() => {});
-    return report({ result: "error", router: mode });
+    // The reason, short and without the user's words: Vercel logs are kept only for a short time.
+    const reason = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").slice(0, 120);
+    return report({ result: "error", router: mode, err: reason });
   }
 }
