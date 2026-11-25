@@ -72,14 +72,26 @@ export function formatTask(t: TaskDraft, buttons: boolean): string {
   return lines.join("\n");
 }
 
+/** The next 15 days with their Hebrew weekday: the model picks a date from this list instead of counting. */
+export function upcomingDays(today: string): string {
+  const start = Date.parse(`${today}T12:00:00Z`);
+  const label = (i: number) => (i === 0 ? " (היום)" : i === 1 ? " (מחר)" : i === 2 ? " (מחרתיים)" : "");
+  return Array.from({ length: 15 }, (_, i) => {
+    const d = new Date(start + i * 86_400_000);
+    return `${d.toISOString().slice(0, 10)} יום ${DAYS[d.getUTCDay()]}${label(i)}`;
+  }).join("\n");
+}
+
 const SYSTEM = (now: ReturnType<typeof israelNow>) => `You turn WhatsApp messages of an Israeli business owner (Hebrew, sometimes a voice transcript) into one task or calendar entry for the Tiktok (תיקתוק) app.
 Now in Israel: ${now.date} ${now.time}, יום ${DAYS[now.weekday]}.
+The next days (copy the date from here, never count days yourself):
+${upcomingDays(now.date)}
 The conversation may hold a first request and then corrections ("לא, ב-11", "תשנה לפגישה"): return the task after all of them.
 Return only JSON:
 {"title": short Hebrew title in the user's words (who + what, no date or time), "description": extra details or "", "task_type": one of ${JSON.stringify(TASK_TYPES)}, "date": "YYYY-MM-DD" or null, "time": "HH:MM" (24h) or null}
 Rules:
 - task_type: "פגישה" a meeting with someone, "שיחת טלפון" a call to make, "צריך לקנות" something to buy, "עבודה" a job to do at a client, "הצעת מחיר" a quote to prepare or send, "משימה אישית" a private matter, otherwise "משימה".
-- Dates are relative to now: "מחר" = tomorrow, "ביום שלישי" = the next Tuesday after today, "בעוד שבוע" = 7 days from today. A time without a date = today if it is still ahead, else tomorrow.
+- Dates: "מחר" = the line marked (מחר); "ביום שישי" / "בשישי" = the first line after today whose weekday is שישי; "בעוד שבוע" = 7 days from today. Today's own weekday name means next week's day unless they say "היום". A time without a date = today if it is still ahead, else tomorrow.
 - Hours: "בעשר" without בלילה/בערב = 10:00, "בארבע" in a work context = 16:00, "בצהריים" = 12:00, "בבוקר" alone = null time.
 - No date or time mentioned: null. Never invent one.`;
 
