@@ -11,7 +11,7 @@ import type { WaSession } from "@/lib/wa/session";
 import { formatSummary } from "@/lib/wa/summary";
 import { isVoiceUrl, downloadVoice, fileKind } from "@/lib/wa/audio";
 import { routerMode, classify, isReceiptImage } from "@/lib/wa/router";
-import { burstCount, answeredRecently, firstInBurst } from "@/lib/wa/batch";
+import { burstCount, answeredRecently, firstInBurst, wonClaim } from "@/lib/wa/batch";
 import { extractTask, formatTask } from "@/lib/wa/task";
 import type { WaUser } from "@/lib/wa/bubble";
 
@@ -33,6 +33,8 @@ const SIGNUP_URL = () => process.env.WA_SIGNUP_URL || "https://app.tik-tok.co.il
 const PURCHASE_URL = () => process.env.WA_PURCHASE_URL || "https://app.tik-tok.co.il/purchase";
 /** The "what can I do here" menu goes to the same contact at most once a month. */
 const MENU_EVERY_MS = 30 * 24 * 3600 * 1000;
+/** An open task draft takes corrections for this long; after it a free message is routed anew. */
+const TASK_IDLE_MS = 30 * 60 * 1000;
 
 const T = {
   start: "🎤 ספרו לי על הצעת המחיר: למי, מה העבודה וכמה זה עולה. אפשר לכתוב או להקליט.",
@@ -197,6 +199,16 @@ async function handle(contactId: string, incoming: Msg | null) {
     cost += r.cost;
     return report({ result, router: "shadow", ...r.props });
   };
+  /** The monthly menu: not if sent in the last MENU_EVERY_MS, and one per burst of messages. true = sent. */
+  const sendMenu = async (text: string, props: Record<string, string | number | null>): Promise<boolean> => {
+    if (await answeredRecently(contactId, "menu", MENU_EVERY_MS)) return false;
+    const marker = crypto.randomUUID().slice(0, 8);
+    await report({ result: "menu_claim", batch: marker, ...props });
+    if (!(await wonClaim(contactId, marker, "menu_claim"))) return false;
+    await reply(contactId, text);
+    await report({ result: "menu", ...props });
+    return true;
+  };
   // A routed message that fails before we decided to answer stays with support, with no error text.
   let speak = true;
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -218,10 +230,7 @@ async function handle(contactId: string, incoming: Msg | null) {
           const c = await classify(openai, msg.text);
           cost += c.cost;
           const props = { route: c.route, confidence: Math.round(c.confidence * 100) / 100, router: "on" };
-          if (c.route !== "auto_reply" && c.route !== "unsure" && !(await answeredRecently(contactId, "menu", MENU_EVERY_MS))) {
-            await reply(contactId, T.menuNoAccount());
-            return report({ result: "menu", why: "no_account", ...props });
-          }
+          if (c.route !== "auto_reply" && c.route !== "unsure" && (await sendMenu(T.menuNoAccount(), { why: "no_account", ...props }))) return;
           return report({ result: "no_account_silent", ...props });
         } catch (err) {
           console.error("[wa/message] no-account menu failed:", err instanceof Error ? err.message : err);
@@ -346,10 +355,8 @@ async function handle(contactId: string, incoming: Msg | null) {
       // Never to an auto-reply ("תודה שפנית ל...") after our own notifications: two bots must not talk.
       if (c.route === "support") {
         try {
-          if (!(await answeredRecently(contactId, "menu", MENU_EVERY_MS))) {
-            await reply(contactId, user.canContinue ? T.menu : `${T.menu}\n\n${T.menuUpgrade}`);
-            return report({ result: "menu", ...props, ...(user.canContinue ? {} : { why: "over_limit" }) });
-          }
+          const text = user.canContinue ? T.menu : `${T.menu}\n\n${T.menuUpgrade}`;
+          if (await sendMenu(text, { ...props, ...(user.canContinue ? {} : { why: "over_limit" }) })) return;
         } catch (err) {
           // The message still waits for a person in Live Chat: no error text.
           console.error("[wa/message] menu failed:", err instanceof Error ? err.message : err);
@@ -389,6 +396,14 @@ async function handle(contactId: string, incoming: Msg | null) {
         return await quoteTurn(session, { route: "quote", why: "button" });
       }
       // Anything else: forget the question and route the new message.
+      await deleteSession(contactId);
+      session = null;
+    }
+
+    // A task draft left without save/cancel: after TASK_IDLE_MS a new message is a new request
+    // (a quote, a support question), not a correction. Its buttons still work.
+    const idle = session?.updated_at ? Date.now() - new Date(session.updated_at).getTime() : 0;
+    if (session?.quote.task && !msg.action && idle > TASK_IDLE_MS) {
       await deleteSession(contactId);
       session = null;
     }

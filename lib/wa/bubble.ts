@@ -115,6 +115,11 @@ export async function createTask(userId: string, t: TaskDraft): Promise<string> 
     const j = JSON.parse(text);
     taskId = j.task_id ?? j.response?.task_id;
   } catch { /* below */ }
-  if (typeof taskId !== "string" || !taskId) throw new Error("wa_create_task: no task_id");
+  // HTTP 200 = the task was created. Without an id we still report success: an error here would
+  // make the user tap "save" again and create the task twice.
+  if (typeof taskId !== "string" || !taskId) {
+    console.warn("[wa/bubble] wa_create_task: 200 without task_id");
+    return "";
+  }
   return taskId;
 }

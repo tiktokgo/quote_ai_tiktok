@@ -76,3 +76,18 @@ export async function firstInBurst(contactId: string, marker: string, result: st
   const open = openBurst(await recent(contactId, [result, replied]), result);
   return open.length === 1 && open[0].props.batch === marker;
 }
+
+const CLAIM_WAIT_MS = 3_000;
+const CLAIM_WINDOW_MS = 2 * 60_000;
+
+/**
+ * Several messages in a row (2–3 support questions) must get one menu, not three. Each writes a claim
+ * row with its marker, waits for the others, and only the oldest claim of the last 2 minutes answers.
+ * If the claim row was not written (Supabase down), nobody answers: better silent than a repeated menu.
+ */
+export async function wonClaim(contactId: string, marker: string, result: string): Promise<boolean> {
+  await new Promise((r) => setTimeout(r, CLAIM_WAIT_MS));
+  const rows = await recent(contactId, [result], CLAIM_WINDOW_MS);
+  const oldest = rows[rows.length - 1];
+  return !!oldest && oldest.props.batch === marker;
+}

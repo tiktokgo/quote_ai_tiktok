@@ -43,15 +43,19 @@ const weekdayOf = (date: string) => new Date(`${date}T12:00:00Z`).getUTCDay();
 export function toIso(date: string, time: string): string {
   const [y, m, d] = date.split("-").map(Number);
   const [hh, mm] = time.split(":").map(Number);
-  const guess = Date.UTC(y, m - 1, d, hh, mm);
-  // The offset of Israel at that moment: what the wall clock shows for `guess` minus `guess`.
-  const p = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
-      .formatToParts(new Date(guess))
-      .map((x) => [x.type, x.value]),
-  );
-  const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
-  return new Date(guess - (wall - guess)).toISOString();
+  const target = Date.UTC(y, m - 1, d, hh, mm);
+  // Israel's offset (wall clock minus UTC) at a moment. Taken twice: on the summer/winter switch
+  // days the offset at `target` read as UTC differs from the offset at the real local moment.
+  const offsetAt = (t: number) => {
+    const p = Object.fromEntries(
+      new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+        .formatToParts(new Date(t))
+        .map((x) => [x.type, x.value]),
+    );
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - t;
+  };
+  const first = target - offsetAt(target);
+  return new Date(target - offsetAt(first)).toISOString();
 }
 
 const ICON: Record<TaskType, string> = { "משימה": "📝", "פגישה": "🤝", "שיחת טלפון": "📞", "משימה אישית": "🙋", "צריך לקנות": "🛒", "עבודה": "🔧", "הצעת מחיר": "📄" };
@@ -99,16 +103,20 @@ export async function extractTask(openai: OpenAI, messages: ChatMessage[]): Prom
   const res = await openai.chat.completions.create({
     model: MODEL,
     temperature: 0,
-    max_tokens: 200,
+    // Hebrew is ~2-3 characters a token: room for a long description in the JSON.
+    max_tokens: 600,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: SYSTEM(israelNow()) },
-      { role: "user", content: messages.filter((m) => m.role === "user").map((m, i) => `${i ? "תיקון" : "בקשה"}: ${m.content}`).join("\n").slice(0, 3000) },
+      // The newest corrections matter most: keep the end when it is long.
+      { role: "user", content: messages.filter((m) => m.role === "user").map((m, i) => `${i ? "תיקון" : "בקשה"}: ${m.content}`).join("\n").slice(-3000) },
     ],
   });
   const cost = costUsd(MODEL, res.usage) ?? 0;
-  let j: Record<string, unknown> = {};
-  try { j = JSON.parse(res.choices[0]?.message?.content ?? "{}"); } catch { /* defaults below */ }
+  // A cut or broken answer must not become an empty "משימה, בלי תאריך" draft the user may save without reading.
+  if (res.choices[0]?.finish_reason !== "stop") throw new Error(`task extract: finish_reason ${res.choices[0]?.finish_reason}`);
+  let j: Record<string, unknown>;
+  try { j = JSON.parse(res.choices[0]?.message?.content ?? ""); } catch { throw new Error("task extract: bad JSON"); }
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
   const date = /^\d{4}-\d{2}-\d{2}$/.test(str(j.date)) && !Number.isNaN(Date.parse(str(j.date))) ? str(j.date) : null;
   const time = /^([01]\d|2[0-3]):[0-5]\d$/.test(str(j.time)) ? str(j.time) : null;
