@@ -183,8 +183,10 @@ export function formatQty(n: number): string {
 // ── Bubble payloads ─────────────────────────────────────────────────────────
 
 /** update_quote (existing workflow) — the fields the old /api/approve-quote sends, plus images and discount_amount. */
-export function buildTotalPayload(q: Partial<QuoteV2>, userId: string): Record<string, unknown> {
-  const p: Record<string, unknown> = { status: "complete", user_id: userId };
+/** update_quote. source ("chat" = the /v2 page, "whatsapp" = the bot) is not in the detected request data yet:
+ *  Bubble ignores it, but it shows in the raw body that the analytics_events_internal step stores. */
+export function buildTotalPayload(q: Partial<QuoteV2>, userId: string, source = "chat"): Record<string, unknown> {
+  const p: Record<string, unknown> = { status: "complete", source, user_id: userId };
   if (q.title) p.title = q.title;
   if (q.client?.name) p.client_name = q.client.name;
   if (q.client?.address) p.client_address = q.client.address;

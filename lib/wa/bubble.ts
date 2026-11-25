@@ -57,7 +57,7 @@ export async function saveQuote(quote: Partial<QuoteV2>, userId: string): Promis
   if (!base) throw new Error("BUBBLE_WEBHOOK_URL not configured");
   const perItem = quote.pricing_mode === "per_item";
   const url = perItem ? process.env.BUBBLE_PER_ITEM_URL || base.replace(/update_quote\/?$/, "update_quote_per_item") : base;
-  const payload = perItem ? buildPerItemPayload(quote, userId, "whatsapp") : buildTotalPayload(quote, userId);
+  const payload = perItem ? buildPerItemPayload(quote, userId, "whatsapp") : buildTotalPayload(quote, userId, "whatsapp");
   const { status, text } = await post(env(url), payload);
   if (status !== 200) throw new Error(`save HTTP ${status}: ${text.slice(0, 200)}`);
   let quoteId: string | undefined;
