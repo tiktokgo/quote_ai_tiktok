@@ -18,11 +18,10 @@ export interface TaskDraft {
   task_type: TaskType;
   /** YYYY-MM-DD in Israel, or null = no date. */
   date: string | null;
-  /** HH:MM in Israel, or null = the date only (saved at DEFAULT_TIME). */
+  /** HH:MM in Israel, or null = the date only. Saved as the start of the title (lib/wa/bubble.ts createTask). */
   time: string | null;
 }
 
-export const DEFAULT_TIME = "09:00";
 const TZ = "Asia/Jerusalem";
 const MODEL = "gpt-4o-mini";
 const DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -64,7 +63,7 @@ export function formatTask(t: TaskDraft, buttons: boolean): string {
   if (t.date) {
     const [y, m, d] = t.date.split("-");
     const when = `🗓 יום ${DAYS[weekdayOf(t.date)]}, ${+d}/${+m}${y !== israelNow().date.slice(0, 4) ? `/${y}` : ""}`;
-    lines.push(t.time ? `${when} בשעה ${t.time}` : `${when} (בלי שעה, נרשם ל-${DEFAULT_TIME})`);
+    lines.push(t.time ? `${when} בשעה ${t.time}` : when);
   } else {
     lines.push("🗓 בלי תאריך");
   }
