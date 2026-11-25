@@ -213,6 +213,15 @@ async function handle(contactId: string, incoming: Msg | null) {
   let speak = true;
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  // WA_BLOCKED_CONTACTS: ManyChat ids that asked never to hear from the bot. No answer, no AI, no Bubble;
+  // a person can still answer them from Live Chat. (An unsubscribed contact who writes is subscribed
+  // again by ManyChat, and its tags cannot be edited while unsubscribed, so the list lives here.)
+  const blocked = (process.env.WA_BLOCKED_CONTACTS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (blocked.includes(contactId)) {
+    await endConversation(contactId);
+    return report({ result: "blocked" });
+  }
+
   try {
     if (!incoming) {
       msg = toMessage((await lastInput(contactId)).trim(), "", "");
