@@ -64,6 +64,7 @@ ${PURCHASE_URL()}`,
   taskSaved: "✅ נשמר במשימות שלך בתיקתוק.",
   taskCancelled: "בוטל, לא נשמר כלום.",
   fileInTask: "📎 קיבלתי קובץ, אבל עכשיו אנחנו באמצע משימה. כתבו \"שמור\" או \"ביטול\", ואז שלחו את הקובץ שוב.",
+  newQuote: (old: string) => `📝 מתחיל הצעה חדשה. הטיוטה "${old}" לא נשמרה.`,
   // A support message, once per MENU_EVERY_MS per contact.
   menu: `היי 👋 קיבלנו את ההודעה, ונציג אמיתי (לא בוט 🙂) יחזור אליך בהקדם.
 
@@ -88,6 +89,8 @@ ${PURCHASE_URL()}`,
 // Typed words that act like the buttons.
 const SAVE_WORDS = /^(שמור|לשמור|שמירה|אישור|מאשר|מאשרת)[.!]?$/;
 const CANCEL_WORDS = /^(ביטול|בטל|לבטל)[.!]?$/;
+/** A new quote request ("תכין לי הצעת מחיר ל...", "צריך הצעה חדשה") — not an edit of the open draft. */
+const NEW_QUOTE_WORDS = /^(תכין|תכיני|תכינו|הכן|תיצור|צור|תעשה|תוציא|תפיק|אני צריך|צריך|בוא נכין|נכין)(\s.{0,25})?\sהצע(ה|ת)/;
 /** Asking to see the open quote again. */
 const SHOW_WORDS = /(איפה|תראה|תראי|שלח|תשלח|לשלוח|לראות|הראה).{0,20}הצעה|^(איפה|ההצעה)\??$/;
 const ACTIONS = ["start", "save", "cancel", "message", "assist", "human"];
@@ -484,6 +487,13 @@ async function handle(contactId: string, incoming: Msg | null) {
 
     const said = await hear();
     if (!said) { await reply(contactId, T.noSpeech); return report({ result: "no_speech" }); }
+    // "תכין לי הצעת מחיר ל..." while an unsaved draft is open: a new quote, not an edit of the old one
+    // (a painting request was merged into an open "קידום אתרים" draft and kept its items).
+    if (session.quote.items?.length && NEW_QUOTE_WORDS.test(said.trim())) {
+      const old = session.quote.title || "הקודמת";
+      await reply(contactId, T.newQuote(old));
+      return await quoteTurn({ contact_id: contactId, user_id: user.userId, messages: [{ role: "user", content: said }], quote: {} }, { why: "new_quote" });
+    }
     session.messages.push({ role: "user", content: said });
     return await quoteTurn(session);
   } catch (err) {
