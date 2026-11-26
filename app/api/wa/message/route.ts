@@ -88,6 +88,8 @@ ${PURCHASE_URL()}`,
 // Typed words that act like the buttons.
 const SAVE_WORDS = /^(שמור|לשמור|שמירה|אישור|מאשר|מאשרת)[.!]?$/;
 const CANCEL_WORDS = /^(ביטול|בטל|לבטל)[.!]?$/;
+/** Asking to see the open quote again. */
+const SHOW_WORDS = /(איפה|תראה|תראי|שלח|תשלח|לשלוח|לראות|הראה).{0,20}הצעה|^(איפה|ההצעה)\??$/;
 const ACTIONS = ["start", "save", "cancel", "message", "assist", "human"];
 interface Body {
   contact_id?: unknown;
@@ -272,7 +274,10 @@ async function handle(contactId: string, incoming: Msg | null) {
       session.quote = turn.quote;
       await saveSession(session);
       const hasQuote = !!session.quote.items?.length;
+      // "איפה ההצעה?" / "שלח לי את ההצעה": show the summary again (with its buttons) even with no change.
+      const asked = SHOW_WORDS.test([...session.messages].reverse().find((m) => m.role === "user")?.content ?? "");
       if (turn.updated && hasQuote) await reply(contactId, formatSummary(session.quote, turn.text), "summary");
+      else if (asked && hasQuote) await reply(contactId, formatSummary(session.quote), "summary");
       else await reply(contactId, turn.text);
       return report({ result: "ai_reply", updated: turn.updated, items: session.quote.items?.length ?? 0, turn: session.messages.length, ...turn.flags, ...extra });
     };

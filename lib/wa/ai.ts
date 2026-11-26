@@ -80,7 +80,10 @@ const WHATSAPP_NOTE =
   `כשאין מה לשאול: "אפשר לשמור, או לכתוב / להקליט מה לשנות."\n` +
   `ההודעות מוקלדות בטלפון או מתומללות מהקלטה, אז יש בהן שגיאות: תקן שגיאות כתיב ותמלול ברורות בשמות הפריטים ובכותרת ` +
   `(למשל "תביעת דירה" ← "צביעת דירה"). שמות של אנשים ומקומות — בדיוק כמו שנאמרו.\n` +
-  `לכל פריט description של שורה שמפרטת מה כלול. פריט יחיד — description מפורט יותר (מה העבודה כוללת), כי הוא כל ההצעה.`;
+  `לכל פריט description של שורה שמפרטת מה כלול. פריט יחיד — description מפורט יותר (מה העבודה כוללת), כי הוא כל ההצעה.
+` +
+  `כשהמשתמש עונה על שאלה שלך (שם לקוח, כתובת, טלפון, מחיר, מע״מ) — תמיד קרא ל-update_quote עם התשובה, גם אם היא רק שם ("לישראל יששכר" ← client.name). ` +
+  `אם הוא לא רוצה למסור פרט (למשל "בלי כתובת") — אל תשאל עליו שוב.`;
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type Suggestion = { name: string; description?: string };
@@ -102,6 +105,8 @@ function nextQuestion(q: Partial<QuoteV2>): string {
 }
 
 const FALSE_UPDATE = /(עדכנתי|הוספתי|שמרתי|נרשם|הכנתי|יצרתי|שיניתי|הסרתי|מחקתי)/;
+/** The last bot message asked for a quote field: the answer must go into the quote, not only into the chat. */
+const ASKED_FIELD = /(למי ההצעה|שם הלקוח|הכתובת|לאיזו כתובת|מה המחיר|להוסיף מע.?מ)/;
 
 export interface TurnResult {
   text: string;
@@ -165,8 +170,9 @@ export async function runTurn(openai: OpenAI, ctx: AIContext, history: ChatMessa
     } catch {
       console.warn("[wa/ai] malformed tool args:", call.function.arguments.slice(0, 200));
     }
-  } else if (FALSE_UPDATE.test(text)) {
-    // The model said it changed the quote but did not call the tool — force the call.
+  } else if (FALSE_UPDATE.test(text) || (Object.keys(current).length > 0 && ASKED_FIELD.test([...history].reverse().find((m) => m.role === "assistant")?.content ?? ""))) {
+    // The model said it changed the quote but did not call the tool, or the user answered our question
+    // about a field ("לישראל יששכר" after "למי ההצעה?") and the model only chatted — force the call.
     const forced = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [...messages, { role: "assistant", content: text }],
